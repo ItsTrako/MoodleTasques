@@ -21,6 +21,7 @@ function safeStorage() {
   }
 }
 
+document.querySelector('.boot-hint')?.remove();
 const storage = safeStorage();
 const vault = new Vault(storage);
 const root = $('#app');
@@ -270,12 +271,12 @@ function toast(message, { key = null, merge = null, action = null, icon: ic = 'i
 // Formularios
 // ---------------------------------------------------------------------------
 
-function passwordField({ id, label, autocomplete, hint, minlength, revealLabel, mono = false, aside = null }) {
+function passwordField({ id, label, autocomplete, hint, minlength, revealLabel, mono = false, aside = null, mask = false }) {
   const input = h('input', {
-    class: 'input' + (mono ? ' mono' : ''),
+    class: 'input' + (mono ? ' mono' : '') + (mask ? ' masked' : ''),
     id,
     name: id,
-    type: 'password',
+    type: mask ? 'text' : 'password',
     autocomplete,
     required: true,
     minlength,
@@ -286,8 +287,9 @@ function passwordField({ id, label, autocomplete, hint, minlength, revealLabel, 
   const reveal = revealLabel || `Mostrar ${label.toLowerCase()}`;
   const btn = h('button', { type: 'button', class: 'btn btn-icon reveal', 'aria-label': reveal, 'aria-pressed': 'false', 'aria-controls': id }, icon('eye', 'icon-sm'));
   btn.addEventListener('click', () => {
-    const show = input.type === 'password';
-    input.type = show ? 'text' : 'password';
+    const show = mask ? input.classList.contains('masked') : input.type === 'password';
+    if (mask) input.classList.toggle('masked', !show);
+    else input.type = show ? 'text' : 'password';
     btn.setAttribute('aria-pressed', String(show));
     mount(btn, icon(show ? 'eye-slash' : 'eye', 'icon-sm'));
   });
@@ -412,7 +414,7 @@ function credsBlock({ mode = 'password', siteUrl = () => '', idPrefix = '' } = {
   const user = textField({ id: idPrefix + 'username', label: 'Usuario', autocomplete: 'username' });
   const pass = passwordField({ id: idPrefix + 'password', label: 'Contraseña', autocomplete: 'current-password', revealLabel: 'Mostrar la contraseña' });
   const counter = h('span', { class: 'aside', 'aria-live': 'off' }, '0/32');
-  const token = passwordField({ id: idPrefix + 'wstoken', label: 'Token de la app móvil', autocomplete: 'off', revealLabel: 'Mostrar el token', mono: true, aside: counter });
+  const token = passwordField({ id: idPrefix + 'wstoken', label: 'Token de la app móvil', autocomplete: 'off', revealLabel: 'Mostrar el token', mono: true, aside: counter, mask: true });
   token.input.setAttribute('inputmode', 'text');
   token.input.setAttribute('maxlength', '64');
   const tokLink = h('a', { target: '_blank', rel: 'noopener noreferrer', class: 'link', hidden: true }, 'Abrir esa página', h('span', { class: 'sr', text: ' (se abre en otra pestaña)' }));
@@ -856,6 +858,7 @@ function renderOnboard(prefill = {}) {
         const data = newData(pending.client, pending.info, pending.mode);
         await vault.create(a, data);
         p1.input.value = p2.input.value = '';
+        scrubRegExp();
         writeHint(data);
         pending = null;
         S.data = data;
@@ -1096,7 +1099,13 @@ function migrate(d) {
   return d;
 }
 
+// Las expresiones regulares guardan la última cadena evaluada (RegExp.input); la sustituimos.
+function scrubRegExp() {
+  /x/.test('x');
+}
+
 function lock(reason) {
+  scrubRegExp();
   S.syncGen++;
   S.syncing = false;
   try {
@@ -1109,6 +1118,7 @@ function lock(reason) {
   document.querySelectorAll('dialog').forEach((d) => d.close());
   S.refs = {};
   S.error = null;
+  S.abort = null;
   if (S.demo) {
     S.demo = false;
     S.data = null;
@@ -1247,7 +1257,7 @@ function renderShell() {
   r.horizon = h('section', { class: 'horizon', 'aria-labelledby': 'hz-title' });
   r.head = h('section', { class: 'head' }, r.title, r.next, r.horizon);
   r.chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Vista' });
-  r.courseSelect = h('select', { class: 'select', 'aria-label': 'Asignatura' });
+  r.courseSelect = h('select', { class: 'select', 'aria-label': 'Asignatura', dataset: { key: 'course-select' } });
   r.courseSelect.addEventListener('change', () => {
     setCourse(r.courseSelect.value === '' ? null : Number(r.courseSelect.value));
   });
@@ -1275,7 +1285,7 @@ function toggleSearchRow(btn) {
   c.classList.toggle('is-searching', open);
   btn?.setAttribute('aria-expanded', String(open));
   if (open) S.refs.search.focus();
-  else if (!S.ui.query) closeSearchRow();
+  else closeSearchRow();
 }
 function closeSearchRow() {
   setQuery('');
@@ -1306,7 +1316,7 @@ function setCourse(id) {
 }
 function setDay(ts) {
   S.ui.day = S.ui.day === ts ? null : ts;
-  if (S.ui.day !== null && S.ui.view === 'done') S.ui.view = 'pending';
+  if (S.ui.day !== null && S.ui.view !== 'pending') S.ui.view = 'pending';
   S.animate = true;
   renderDynamic();
   if (S.ui.day !== null) {
@@ -1330,10 +1340,8 @@ function signature(now) {
 }
 
 function restoreFocus(key) {
-  const target =
-    (key && root.querySelector(`[data-key="${CSS.escape(key)}"]`)) ||
-    (S.focusNext && root.querySelector(`[data-key="${CSS.escape(S.focusNext)}"]`)) ||
-    S.refs.tasksH;
+  const find = (k) => k && [...root.querySelectorAll(`[data-key="${CSS.escape(k)}"]`)].find((el) => el.getClientRects().length);
+  const target = find(key) || find(S.focusNext) || S.refs.tasksH;
   target?.focus({ preventScroll: true });
 }
 
@@ -1346,7 +1354,7 @@ function renderDynamic() {
 
   const vis = visibleTasks(now);
   const sum = T.summarize(vis, d.done, now);
-  const doneCount = Object.keys(d.done).length + d.history.filter((x) => x.how !== 'expired').length;
+  const doneCount = countDone(d);
   const loading = S.syncing && !d.lastSync && !S.demo;
   const allClear = !loading && sum.pending === 0 && (d.lastSync || S.demo);
 
@@ -1419,7 +1427,7 @@ function renderHead(now, sum, { loading, allClear, doneCount }) {
   r.clearMeta = null;
 
   if (loading) {
-    r.h1 = h('h1', { class: 'is-loading', tabindex: '-1', text: 'Cargando tus tareas…' });
+    r.h1 = h('h1', { class: 'is-loading', tabindex: '-1', dataset: { key: 'h1' }, text: 'Cargando tus tareas…' });
     mount(r.title, h('p', { class: 'eyebrow', text: capital(T.formatDay(now)) }), r.h1, h('span', { class: 'sk sk-pill' }));
     r.next.hidden = false;
     mount(r.next, h('div', { class: 'sk-next', 'aria-hidden': 'true' }, h('span', { class: 'sk', style: { width: '40%' } }), h('span', { class: 'sk', style: { width: '70%', height: '28px' } }), h('span', { class: 'sk', style: { width: '55%' } })));
@@ -1428,7 +1436,7 @@ function renderHead(now, sum, { loading, allClear, doneCount }) {
   }
 
   if (allClear) {
-    r.h1 = h('h1', { tabindex: '-1', text: first ? `Vía libre, ${first}.` : 'Vía libre.' });
+    r.h1 = h('h1', { tabindex: '-1', dataset: { key: 'h1' }, text: first ? `Vía libre, ${first}.` : 'Vía libre.' });
     r.clearMeta = !S.demo && d.lastSync ? h('p', { class: 'clear-meta', text: `Última sincronización: ${T.relative(d.lastSync, now)}.` }) : null;
     mount(
       r.title,
@@ -1445,7 +1453,7 @@ function renderHead(now, sum, { loading, allClear, doneCount }) {
   const count = h('span', { class: 'tnum', text: String(sum.pending) });
   r.h1 = h(
     'h1',
-    { tabindex: '-1' },
+    { tabindex: '-1', dataset: { key: 'h1' } },
     first ? h('span', { class: 'hello', text: `Hola, ${first}. ` }) : null,
     sum.pending === 1 ? 'Te queda ' : 'Te quedan ',
     count,
@@ -1505,7 +1513,7 @@ function renderNext(t, after, now) {
       )
     ),
     after
-      ? h('p', { class: 'after' }, h('span', { class: 'k', text: 'Después' }), h('span', { class: 't', lang: contentLang(), text: after.title }), h('time', { datetime: new Date(after.due).toISOString(), text: T.formatDue(after.due, now) }))
+      ? h('p', { class: 'after' }, h('span', { class: 'k', text: 'Después' }), h('span', { class: 't', lang: contentLang(), text: after.title }), h('time', { datetime: new Date(after.due).toISOString(), text: (({ day, time }) => `${day}, ${time}`)(T.formatDueParts(after.due, now)) }))
       : null,
     h(
       'div',
@@ -1671,6 +1679,7 @@ function renderChips(sum, doneCount, courses) {
   }
   r.courseSelect.value = S.ui.course === null ? '' : String(S.ui.course);
   const selCourse = courses.find((c) => c.id === S.ui.course);
+  const keepScroll = r.chips.scrollLeft;
   mount(
     r.chips,
     ...filters,
@@ -1681,6 +1690,12 @@ function renderChips(sum, doneCount, courses) {
       ? h('label', { class: 'chip-select' }, h('span', { class: 'chip' + (selCourse ? ' is-on' : ''), 'aria-hidden': 'true' }, selCourse ? selCourse.code || T.courseCode(selCourse.short, selCourse.name) : 'Asignatura', icon('caret-down', 'icon-xs')), r.courseSelect)
       : null
   );
+  r.chips.scrollLeft = keepScroll;
+  const on = r.chips.querySelector('.chip[aria-pressed="true"]');
+  if (on && r.chips.clientWidth) {
+    const a = on.offsetLeft - r.chips.offsetLeft;
+    if (a < r.chips.scrollLeft || a + on.offsetWidth > r.chips.scrollLeft + r.chips.clientWidth) r.chips.scrollLeft = a - 16;
+  }
 }
 
 function activeFilterChips(courses) {
@@ -1730,8 +1745,19 @@ function updateSyncPill(now) {
 function renderBanner() {
   const e = S.error;
   const r = S.refs;
-  if (!e) return clear(r.banner);
+  if (!e) {
+    r.bannerFor = null;
+    return clear(r.banner);
+  }
   const d = S.data;
+  const rel = d.lastSync ? T.relative(d.lastSync, Date.now()) : '';
+  const subText = !d.lastSync ? 'Aún no se ha podido descargar nada.' : rel === 'ahora' ? 'Mientras tanto ves la última copia.' : `Mientras tanto ves la copia de ${rel}.`;
+  if (r.bannerFor === e && r.banner.firstChild) {
+    const sub = r.banner.querySelector('.sub');
+    if (sub) sub.textContent = subText;
+    return;
+  }
+  r.bannerFor = e;
   const expired = e.code === 'invalidtoken' || e.code === 'accessexception';
   const site = ['sitepolicynotagreed', 'usernotfullysetup', 'passwordisexpired'].includes(e.code);
   let action;
@@ -1748,7 +1774,7 @@ function renderBanner() {
         'div',
         { class: 'alert-body' },
         h('p', { class: 'msg', text: e.message }),
-        h('p', { class: 'sub', text: d.lastSync ? `Mientras tanto ves la copia de ${T.relative(d.lastSync, Date.now())}.` : 'Aún no se ha podido descargar nada.' }),
+        h('p', { class: 'sub', text: subText }),
         h('div', { class: 'alert-actions' }, action)
       )
     )
@@ -1781,6 +1807,15 @@ function emptyState(title, body, { tone = 'neutral', ic = 'tray', action = null 
   );
 }
 
+// Lo que sale en Hechas: marcas propias de tareas que siguen en la lista y lo que ya no aparece en Moodle (sin repetir).
+function countDone(d) {
+  const ids = new Set(d.tasks.filter((t) => d.done[t.id]).map((t) => t.id));
+  d.history.forEach((x) => {
+    if (x.how !== 'expired') ids.add(x.id);
+  });
+  return ids.size;
+}
+
 function rowFor(id) {
   return root.querySelector(`.row[data-id="${CSS.escape(id)}"]`);
 }
@@ -1797,7 +1832,8 @@ function renderList(now = Date.now()) {
 
   if (view === 'done') {
     const manual = d.tasks.filter((t) => d.done[t.id]).map((t) => ({ ...t, completedAt: d.done[t.id], how: 'manual' }));
-    let items = [...manual, ...d.history];
+    const manualIds = new Set(manual.map((t) => t.id));
+    let items = [...manual, ...d.history.filter((x) => !manualIds.has(x.id))];
     items = T.filterTasks(items, { view: 'all', course, query }, now).sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
     if (!items.length) {
       if (query) return mount(r.list, emptyState('Sin resultados', `Nada coincide con «${query}».`, { ic: 'magnifying-glass', action: h('button', { type: 'button', class: 'btn btn-outline', onclick: () => setQuery(''), text: 'Borrar búsqueda' }) }));
@@ -1838,7 +1874,7 @@ function renderList(now = Date.now()) {
       const sum = T.summarize(visibleTasks(now), d.done, now);
       return mount(r.list, emptyState('Nada en los próximos 7 días', sum.next ? `Tu próxima entrega es el ${T.formatDue(sum.next.due, now).toLowerCase()}.` : '', { tone: 'ok', ic: 'check-circle' }));
     }
-    const doneCount = Object.keys(d.done).length + d.history.filter((x) => x.how !== 'expired').length;
+    const doneCount = countDone(d);
     return mount(r.list, doneCount ? h('div', { class: 'empty' }, h('button', { type: 'button', class: 'btn btn-ghost', onclick: () => setView('done') }, icon('check-circle', 'icon-sm'), `Ver hechas (${doneCount})`)) : clear(h('div')));
   }
 
@@ -1886,11 +1922,11 @@ function toggleDone(t, done, li) {
   if (!d) return;
   if (li && li.isConnected) S.focusNext = nextFocusKey(li);
   const timers = [];
+  if (done) d.done[t.id] = Date.now();
+  else delete d.done[t.id];
+  persist();
   const apply = () => {
     if (S.data !== d) return;
-    if (done) d.done[t.id] = Date.now();
-    else delete d.done[t.id];
-    persist();
     S.animate = false;
     renderDynamic();
   };
@@ -1911,7 +1947,8 @@ function toggleDone(t, done, li) {
   announce('Marcada como hecha');
   let first = false;
   try {
-    first = !storage.getItem('mt.seen.check');
+    first = !S.seenCheck && !storage.getItem('mt.seen.check');
+    S.seenCheck = true;
     if (first && !S.demo) storage.setItem('mt.seen.check', '1');
   } catch {
     /* nada */
@@ -2328,6 +2365,7 @@ function openChangePassphrase() {
         }
         await vault.create(a, S.data);
         cur.input.value = p1.input.value = p2.input.value = '';
+        scrubRegExp();
         close();
         toast('Frase cambiada. Tus datos se han vuelto a cifrar con una clave nueva.', { icon: 'check-circle' });
       } catch (err) {
