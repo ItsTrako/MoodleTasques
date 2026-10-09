@@ -1,7 +1,20 @@
 {
   "name": "moodletasques",
-  "version": "1.1.0",
-  "description": "Las tareas que te quedan en Moodle, cifradas en tu navegador.",
+  "version": "1.2.0",
+  "description": "Todo lo que te queda en Moodle en una sola lista: tareas, notas y entregas, cifrado en tu navegador.",
+  "keywords": [
+    "moodle",
+    "tareas",
+    "notas",
+    "estudiantes",
+    "educaciodigital",
+    "cifrado"
+  ],
+  "homepage": "https://github.com/ItsTrako/MoodleTasques#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ItsTrako/MoodleTasques.git"
+  },
   "type": "module",
   "private": true,
   "license": "MIT",

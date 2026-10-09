@@ -1,6 +1,31 @@
-# Tasques
+<p align="center">
+  <img src="public/assets/favicon.svg" width="76" alt="">
+</p>
 
-Las tareas que te quedan en Moodle, en una sola lista y con tus datos cifrados en el navegador.
+<h1 align="center">Tasques</h1>
+
+<p align="center">
+  <b>Todo lo que te queda en Moodle, en una sola lista.</b><br>
+  Entregas, cuestionarios, notas y comentarios de todas tus asignaturas, ordenados por fecha y cifrados en tu navegador.
+</p>
+
+<p align="center">
+  <a href="#en-windows-lo-más-fácil">Instalar</a> ·
+  <a href="#qué-hace">Qué hace</a> ·
+  <a href="#preguntas-frecuentes">Preguntas</a> ·
+  <a href="#seguridad">Seguridad</a>
+</p>
+
+<p align="center">
+  <img alt="Node.js 20 o superior" src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white">
+  <img alt="Sin dependencias" src="https://img.shields.io/badge/dependencias-0-2f4fe0">
+  <img alt="Cifrado AES-256" src="https://img.shields.io/badge/cifrado-AES--256--GCM-1f2937">
+  <img alt="Licencia MIT" src="https://img.shields.io/badge/licencia-MIT-6b7280">
+</p>
+
+<p align="center">
+  <img src="docs/img/panel.png" alt="Panel de Tasques: tareas pendientes agrupadas por fecha, cuenta atrás y franja de dos semanas" width="920">
+</p>
 
 Hecho para el Moodle del **IES Gabriela Mistral** (la dirección ya viene puesta), pero funciona con cualquier Moodle que tenga activada la app móvil.
 
@@ -16,8 +41,34 @@ Hecho para el Moodle del **IES Gabriela Mistral** (la dirección ya viene puesta
 - **Hechas:** lo que entregas en Moodle sale de la lista y pasa aquí solo. También puedes marcar tareas a mano (solo en tu dispositivo).
 - **Exportar a calendario (.ics)**, una tarea suelta o todas a la vez, con aviso 24 h antes.
 - **Desbloqueo rápido:** el formulario funciona con los gestores de contraseñas del navegador, y tú eliges cuándo se bloquea (de 5 min a 4 h sin uso, o solo al cerrar la pestaña).
-- **Tema claro, oscuro o automático.** Funciona en el móvil.
+- **Tema claro, oscuro o automático.** Se adapta a pantallas pequeñas.
 - **Modo demostración** con datos de ejemplo, sin conectar nada.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/img/notas.png" alt="Vista de notas: media, gráfico por asignatura y últimas notas"><br><sub><b>Notas.</b> Media, gráfico por asignatura y avisos de notas nuevas.</sub></td>
+    <td width="50%"><img src="docs/img/tarea.png" alt="Panel de una tarea con el estado de la entrega"><br><sub><b>Cada tarea.</b> Estado de tu entrega, nota máxima, adjuntos y descripción.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/img/notas-asignatura.png" alt="Notas de una asignatura con comentarios del profesorado"><br><sub><b>Cada asignatura.</b> Todas sus calificaciones con los comentarios.</sub></td>
+    <td width="50%"><img src="docs/img/panel-oscuro.png" alt="Panel en tema oscuro"><br><sub><b>Tema oscuro.</b> Automático según tu sistema, o elegido a mano.</sub></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/img/movil.png" alt="Tasques en una pantalla de móvil" width="280">
+  &nbsp;&nbsp;
+  <img src="docs/img/movil-notas.png" alt="Notas en una pantalla de móvil, tema oscuro" width="280">
+</p>
+
+<sub>Capturas con datos de ejemplo (modo demostración).</sub>
+
+### Cómo funciona
+
+1. Tasques se ejecuta **en tu ordenador**: un pequeño servidor de Node sirve la página en `http://127.0.0.1:8080`.
+2. Te conectas a tu Moodle con el **token de la app móvil** (o con usuario y contraseña, si tu centro lo permite). Es el mismo acceso que usa la app oficial de Moodle.
+3. Tasques pide a Moodle tu línea de tiempo, tus asignaturas, tus notas y el estado de tus entregas, y lo ordena por fecha.
+4. Todo se guarda **cifrado en tu navegador** con una frase de acceso que solo sabes tú. No hay ningún servidor intermedio ni cuentas: tus datos no salen de tu ordenador más que hacia tu propio Moodle.
 
 Sin dependencias ni paso de compilación: HTML, CSS y JavaScript nativos, más un pequeño servidor en Node.
 
@@ -91,6 +142,26 @@ npm test             # pruebas (node:test)
 La app usa el servicio `moodle_mobile_app`, el mismo que la app oficial de Moodle. Si tu centro no lo tiene activado, no funcionará: pide que activen la app móvil.
 
 Si olvidas la frase de acceso no hay forma de recuperar los datos: bórralos desde la pantalla de bloqueo y vuelve a conectar. En Moodle no se pierde nada.
+
+## Preguntas frecuentes
+
+**¿Es una app oficial de Moodle o del instituto?**
+No. Es un proyecto independiente que usa el servicio oficial de la app móvil de Moodle. No está afiliado a Moodle HQ, al Departament d'Educació ni a ningún centro.
+
+**¿Puede alguien ver mis notas o mi contraseña?**
+No. Tu contraseña de Moodle no se guarda nunca, y el token, las tareas y las notas se guardan cifrados en tu navegador. No hay ningún servidor de Tasques: solo tu ordenador y tu Moodle.
+
+**¿Funciona en mi instituto?**
+Si tu Moodle tiene activada la app móvil, sí. Cambia `moodleUrl` y `schoolName` en `tasques.config.json` (o escribe la dirección en la pantalla de inicio).
+
+**¿Marcar una tarea como hecha la entrega en Moodle?**
+No. Solo cambia tu lista. Para entregar, usa el botón «Abrir en Moodle» del panel de la tarea.
+
+**¿Y en el móvil?**
+La interfaz está pensada también para el móvil, pero Tasques se ejecuta en tu ordenador. Para usarlo desde el móvil hay que publicarlo con HTTPS (ver [Despliegue](#despliegue)).
+
+**No veo las notas.**
+Algunos centros no comparten el informe de calificaciones con la app. En ese caso Tasques lo indica y las tareas siguen funcionando igual.
 
 ## Configuración: `tasques.config.json`
 
@@ -175,17 +246,18 @@ public/
   js/crypto.js            bóveda cifrada
   js/common-passwords.js  contraseñas demasiado comunes (se rechazan)
   js/moodle.js            cliente REST de Moodle
-  js/details.js       notas y detalles de las tareas (puro, probado)
+  js/details.js           notas y detalles de las tareas (pura, probada)
   js/store.js             lógica de tareas (pura, probada)
   js/ics.js               exportación a calendario
   js/demo.js              datos de ejemplo
   assets/                 fuentes, iconos, favicon, tasques.ico y licencias
 test/                     pruebas (node --test)
+docs/img/                 capturas para este README
 ```
 
 ## Licencias
 
-- Código de Tasques: MIT.
+- Código de Tasques: MIT, en [`LICENSE`](LICENSE).
 - Geist y Geist Mono: SIL Open Font License 1.1, en `public/assets/fonts/OFL-Geist.txt`.
 - Phosphor Icons: MIT, en `public/assets/LICENSE-phosphor.txt`.
 - Lista de contraseñas comunes: SecLists (MIT), citada en `public/js/common-passwords.js`.
