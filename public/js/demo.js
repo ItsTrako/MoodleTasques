@@ -63,7 +63,8 @@ export function demoData(now = Date.now()) {
       url: null,
       actionName: action,
       actionable,
-      cmid: 0,
+      cmid: i + 1,
+      instance: i + 1,
       eventtype: 'due',
       description,
       source: 'demo',
@@ -79,5 +80,62 @@ export function demoData(now = Date.now()) {
     tasks,
     courses: COURSES,
     history,
+    grades: demoGrades(now),
+    details: demoDetails(tasks, now),
   };
+}
+
+// Calificaciones de ejemplo: [nombre, tipo, nota, máximo, hace N días, comentario]
+const GRADES = {
+  101: [7.1, [['Fulla 4: límits', 'assign', 8, 10, 1, 'Molt bé el plantejament. Vigila els signes al pas 3.'], ['Control: funcions', 'quiz', 6.5, 10, 6, ''], ['Fulla 3: successions', 'assign', 7, 10, 15, '']]],
+  102: [5.6, [['Qüestionari tema 3: vectors', 'quiz', 4.2, 10, 3, ''], ['Informe: moviment rectilini', 'assign', 6.8, 10, 12, 'Falta la gràfica de velocitat. La resta, correcte.']]],
+  103: [8.4, [['Fitxa: el Partenó', 'assign', 9, 10, 2, 'Excel·lent anàlisi formal.'], ['Test del Romànic', 'quiz', 7.8, 10, 18, '']]],
+  104: [6.3, [['Comentari: Bécquer', 'assign', 6, 10, 9, 'Bona interpretació, però cal revisar l\'ortografia.'], ['Lectura: La casa de Bernarda Alba', 'quiz', 6.6, 10, 25, '']]],
+  105: [8.9, [['Writing: a formal email', 'assign', 9.25, 10, 4, 'Great structure and vocabulary.'], ['Listening unit 4', 'quiz', 8.5, 10, 11, '']]],
+  106: [7.6, [['Pràctica 2: layout amb CSS Grid', 'assign', 82, 100, 5, 'Bon ús de grid-template-areas. Millora el responsive.'], ['Test: selectors CSS', 'quiz', 7, 10, 20, '']]],
+};
+
+function fmt(n) {
+  return Number.isInteger(n) ? n.toFixed(2).replace('.', ',') : String(Math.round(n * 100) / 100).replace('.', ',');
+}
+
+function demoGrades(now) {
+  const courses = {};
+  let id = 1;
+  Object.entries(GRADES).forEach(([cid, [total, items]]) => {
+    courses[cid] = {
+      total: { formatted: fmt(total), raw: total, min: 0, max: 10, pct: total / 10 },
+      items: items.map(([name, module, raw, max, days, feedback]) => ({
+        id: id++,
+        name,
+        module,
+        instance: 0,
+        cmid: 0,
+        formatted: fmt(raw),
+        raw,
+        min: 0,
+        max,
+        pct: raw / max,
+        feedback,
+        graded: now - days * D - 3 * H,
+        submitted: now - (days + 2) * D,
+        weight: '',
+      })),
+    };
+  });
+  return { at: now, courses };
+}
+
+function demoDetails(tasks, now) {
+  const assign = {};
+  const quiz = {};
+  const sub = {};
+  tasks.forEach((t) => {
+    if (t.kind === 'assign') {
+      assign[t.instance] = { maxGrade: t.courseId === 106 ? 100 : 10, scale: false, cutoff: t.due < now ? t.due + 3 * D : 0, opens: 0, files: t.instance % 3 === 0 ? 1 : 0, attempts: null };
+      sub[t.instance] = { status: t.instance === 3 || t.instance === 1 ? 'draft' : 'new', modified: t.instance === 3 ? now - 5 * H : 0, graded: false, grade: '', gradedAt: 0, feedback: '', extension: 0 };
+    }
+    if (t.kind === 'quiz') quiz[t.instance] = { timeLimit: t.courseId === 102 ? 1800 : 2700, attempts: t.courseId === 103 ? 0 : 1, opens: 0, closes: t.due, maxGrade: 10 };
+  });
+  return { assign, quiz, sub };
 }

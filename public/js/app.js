@@ -3,6 +3,7 @@ import { MoodleClient, MoodleError, eventToTask, textOf, normalizeSiteUrl, token
 import * as T from './store.js';
 import { demoData } from './demo.js';
 import { buildIcs } from './ics.js';
+import * as G from './details.js';
 import { h, icon, mount, clear, $ } from './dom.js';
 
 // ---------------------------------------------------------------------------
@@ -57,6 +58,7 @@ const VIEWS = [
   ['today', 'Hoy', 'hourglass-medium'],
   ['week', 'Próximos 7 días', 'calendar-dots'],
   ['done', 'Hechas', 'check-circle'],
+  ['grades', 'Notas', 'chart-bar'],
 ];
 const VIEW_LABEL = Object.fromEntries(VIEWS.map(([id, l]) => [id, l]));
 
@@ -627,6 +629,10 @@ function taskRow(t, now, i, ctx = {}) {
   );
 
   const badges = [];
+  const det = taskDetails(t);
+  if (!inDone && det.sub?.status === 'draft') badges.push(h('span', { class: 'badge is-warn', title: 'Tienes un borrador guardado que aún no has enviado' }, icon('pencil-simple-line', 'icon-xs'), 'Borrador'));
+  if (!inDone && det.sub?.extension > now) badges.push(h('span', { class: 'badge is-ok', title: `Prórroga hasta ${T.formatLongDate(det.sub.extension)}` }, 'Prórroga'));
+  if (!inDone && det.q?.timeLimit) badges.push(h('span', { class: 'badge' }, icon('timer', 'icon-xs'), `${Math.round(det.q.timeLimit / 60)} min`));
   if (closed && bucket === 'overdue') badges.push(h('span', { class: 'badge', text: 'Ya no admite entregas' }));
   else if (closed) badges.push(h('span', { class: 'badge', text: 'Aún no está abierto' }));
   if (how === 'manual' && S.data?.tasks.some((x) => x.id === t.id && x.due < now)) badges.push(h('span', { class: 'badge is-warn', text: 'Moodle aún la ve pendiente' }));
@@ -919,6 +925,9 @@ function newData(client, info, mode) {
     colors: {},
     done: {},
     history: [],
+    grades: null,
+    details: { assign: {}, quiz: {}, sub: {} },
+    gradesSeenAt: 0,
     lastSync: 0,
     prefs: { lockMinutes: 10, overdueDays: 30, transport: client.transport === 'proxy' ? 'proxy' : 'auto' },
   };
@@ -951,6 +960,9 @@ function enterDemo() {
     colors: T.assignCourseColors({}, d.courses.map((c) => c.id)),
     done: {},
     history: d.history,
+    grades: d.grades,
+    details: d.details,
+    gradesSeenAt: Date.now() - 4 * DAY,
     lastSync: Date.now(),
     prefs: { lockMinutes: 0, overdueDays: 30, transport: 'auto' },
   };
@@ -1091,6 +1103,9 @@ function migrate(d) {
   d.tasks = d.tasks || [];
   d.courses = d.courses || [];
   d.colors = d.colors || {};
+  d.grades = d.grades || null;
+  d.details = d.details || { assign: {}, quiz: {}, sub: {} };
+  d.gradesSeenAt = d.gradesSeenAt || 0;
   d.site = d.site || {};
   d.site.name = textOf(d.site.name || 'Moodle', 120);
   if (!Object.keys(d.colors).length) {
@@ -1301,13 +1316,18 @@ function setQuery(q) {
 }
 
 function setView(view, { course = S.ui.course, keepDay = false } = {}) {
+  if (view === 'grades' && S.data && S.ui.view !== 'grades') {
+    S.gradesSeenBefore = S.data.gradesSeenAt || 0;
+    S.data.gradesSeenAt = Date.now();
+    persist();
+  }
   S.ui.view = view;
   S.ui.course = course;
   if (!keepDay) S.ui.day = null;
   S.animate = true;
   renderDynamic();
   const n = S.refs.list?.querySelectorAll('.row').length || 0;
-  announce(`${VIEW_LABEL[view]}: ${n} ${plural(n, 'tarea', 'tareas')}`);
+  announce(view === 'grades' ? 'Notas' : `${VIEW_LABEL[view]}: ${n} ${plural(n, 'tarea', 'tareas')}`);
 }
 function setCourse(id) {
   S.ui.course = id;
@@ -1366,7 +1386,9 @@ function renderDynamic() {
   document.title = sum.pending ? `(${sum.pending}) Tasques` : 'Tasques';
   S.refs.content.setAttribute('aria-busy', String(loading));
 
-  renderHead(now, sum, { loading, allClear, doneCount });
+  const inGrades = S.ui.view === 'grades';
+  r0().head.hidden = inGrades;
+  if (!inGrades) renderHead(now, sum, { loading, allClear, doneCount });
   renderNav(sum, doneCount, courses);
   renderChips(sum, doneCount, courses);
   renderCrumb(courses);
@@ -1606,8 +1628,16 @@ function renderHorizon(now) {
   );
 }
 
+const r0 = () => S.refs;
+
+function newGradesCount(now = Date.now()) {
+  const d = S.data;
+  if (!d?.grades) return 0;
+  return G.recentGrades(d.grades, Math.max(d.gradesSeenAt || 0, now - 14 * DAY), 99).length;
+}
+
 function viewCounts(sum, doneCount) {
-  return { pending: sum.pending, overdue: sum.overdue, today: sum.today, week: sum.thisWeek, done: doneCount };
+  return { pending: sum.pending, overdue: sum.overdue, today: sum.today, week: sum.thisWeek, done: doneCount, grades: newGradesCount() };
 }
 
 function renderNav(sum, doneCount, courses) {
@@ -1625,7 +1655,7 @@ function renderNav(sum, doneCount, courses) {
           { type: 'button', 'aria-pressed': String(S.ui.view === id), dataset: { key: 'view:' + id }, onclick: () => setView(id) },
           icon(ic, 'icon-sm'),
           h('span', { class: 'label', text: label }),
-          n || id === 'pending' ? h('span', { class: 'count' + (id === 'overdue' && n ? ' is-danger' : ''), text: String(n) }) : null
+          n || id === 'pending' ? h('span', { class: 'count' + (id === 'overdue' && n ? ' is-danger' : '') + (id === 'grades' ? ' is-new' : ''), title: id === 'grades' ? `${n} ${plural(n, 'nota nueva', 'notas nuevas')}` : null, text: String(n) }) : null
         )
       );
     })
@@ -1666,7 +1696,7 @@ function renderNav(sum, doneCount, courses) {
 function renderChips(sum, doneCount, courses) {
   const r = S.refs;
   const counts = viewCounts(sum, doneCount);
-  const short = { pending: 'Pendientes', overdue: 'Atrasadas', today: 'Hoy', week: '7 días', done: 'Hechas' };
+  const short = { pending: 'Pendientes', overdue: 'Atrasadas', today: 'Hoy', week: '7 días', done: 'Hechas', grades: 'Notas' };
   const filters = activeFilterChips(courses);
   const sig = courses.map((c) => c.id + ':' + c.count).join('|') + '#' + S.ui.course;
   if (r.courseSelect.dataset.sig !== sig) {
@@ -1683,8 +1713,8 @@ function renderChips(sum, doneCount, courses) {
   mount(
     r.chips,
     ...filters,
-    ...VIEWS.filter(([id]) => counts[id] || id === 'pending' || id === S.ui.view).map(([id]) =>
-      h('button', { type: 'button', class: 'chip', 'aria-pressed': String(S.ui.view === id), dataset: { key: 'chip:' + id }, onclick: () => setView(id) }, short[id], h('span', { class: 'num', text: String(counts[id]) }))
+    ...VIEWS.filter(([id]) => counts[id] || id === 'pending' || id === S.ui.view || (id === 'grades' && S.data.grades)).map(([id]) =>
+      h('button', { type: 'button', class: 'chip', 'aria-pressed': String(S.ui.view === id), dataset: { key: 'chip:' + id }, onclick: () => setView(id) }, short[id], id !== 'grades' || counts[id] ? h('span', { class: 'num', text: String(counts[id]) }) : null)
     ),
     courses.length
       ? h('label', { class: 'chip-select' }, h('span', { class: 'chip' + (selCourse ? ' is-on' : ''), 'aria-hidden': 'true' }, selCourse ? selCourse.code || T.courseCode(selCourse.short, selCourse.name) : 'Asignatura', icon('caret-down', 'icon-xs')), r.courseSelect)
@@ -1828,6 +1858,7 @@ function renderList(now = Date.now()) {
   const { view, course, day } = S.ui;
   const query = (S.ui.query || '').trim();
   const loading = S.syncing && !d.lastSync && !S.demo;
+  if (view === 'grades') return renderGrades(now);
   if (loading) return mount(r.list, skeletonList());
 
   if (view === 'done') {
@@ -1897,6 +1928,207 @@ function renderList(now = Date.now()) {
       )
     )
   );
+}
+
+// ---------------------------------------------------------------------------
+// Notas
+// ---------------------------------------------------------------------------
+
+function gradeValue(formatted, max, pct, cls = '') {
+  const tone = G.gradeTone(pct);
+  return h(
+    'span',
+    { class: 'gval ' + cls + (tone ? ' is-' + tone : '') },
+    h('b', { class: 'tnum', text: formatted || '-' }),
+    max && /^\d/.test(formatted || '') ? h('span', { class: 'gmax', text: `/${String(max).replace('.', ',')}` }) : null
+  );
+}
+
+function gradeBar(pct, cid) {
+  return h('span', { class: 'gbar', 'aria-hidden': 'true' }, h('span', { class: 'gfill', style: { '--h': String(hueOf(cid)), '--p': String(typeof pct === 'number' ? pct : 0) } }));
+}
+
+function courseOf(cid) {
+  const c = (S.data?.courses || []).find((x) => Number(x.id) === Number(cid));
+  const t = (S.data?.tasks || []).find((x) => x.courseId === Number(cid));
+  const name = c?.fullname || t?.courseName || 'Asignatura';
+  const short = c?.shortname || t?.courseShort || '';
+  return { id: Number(cid), name, short, code: T.courseCode(short, name), progress: typeof c?.progress === 'number' ? Math.round(c.progress) : null };
+}
+
+function courseTag(cid) {
+  const c = courseOf(cid);
+  return h('span', { class: 'tag', title: c.name, lang: contentLang(), style: { '--h': String(hueOf(cid)) }, text: c.code });
+}
+
+function renderGrades(now) {
+  const d = S.data;
+  const r = S.refs;
+  const g = d.grades;
+  const lang = contentLang();
+  const query = T.fold ? T.fold((S.ui.query || '').trim()) : (S.ui.query || '').trim().toLowerCase();
+  if (!g) {
+    if (S.syncing) return mount(r.list, h('div', { class: 'grades' }, gradesHead(null, 0), skeletonList()));
+    return mount(r.list, h('div', { class: 'grades' }, gradesHead(null, 0), emptyState('Aún no hay notas', 'Sincroniza para traer tus calificaciones de Moodle.', { ic: 'chart-bar', action: h('button', { type: 'button', class: 'btn btn-primary', onclick: () => sync(), text: 'Sincronizar' }) })));
+  }
+  let sums = G.courseSummaries(g, d.courses);
+  if (S.ui.course !== null) sums = sums.filter((c) => c.id === S.ui.course);
+  if (query) sums = sums.filter((c) => T.fold(`${courseOf(c.id).name} ${courseOf(c.id).code} ${c.items.map((i) => i.name).join(' ')}`).includes(query));
+  const avg = G.averagePct(sums);
+  const seenBefore = S.gradesSeenBefore ?? d.gradesSeenAt ?? 0;
+  const recent = G.recentGrades({ courses: Object.fromEntries(sums.map((c) => [c.id, { items: c.items }])) }, now - 21 * DAY, 6);
+  const newCount = recent.filter((i) => i.graded > seenBefore).length;
+
+  if (!sums.length) {
+    const msg = g.error
+      ? emptyState('Tu centro no comparte las notas con la app', 'Puedes verlas en la web de Moodle, en Calificaciones.', { ic: 'chart-bar', action: d.site.url && !S.demo ? h('a', { class: 'btn btn-outline', href: `${d.site.url}/grade/report/overview/index.php`, target: '_blank', rel: 'noopener noreferrer' }, icon('arrow-up-right', 'icon-sm'), 'Abrir en Moodle') : null })
+      : query
+        ? emptyState('Sin resultados', `Ninguna nota coincide con «${S.ui.query.trim()}».`, { ic: 'magnifying-glass', action: h('button', { type: 'button', class: 'btn btn-outline', onclick: () => setQuery(''), text: 'Borrar búsqueda' }) })
+        : emptyState('Aún no tienes notas', 'Cuando el profesorado califique algo, aparecerá aquí.', { ic: 'chart-bar' });
+    return mount(r.list, h('div', { class: 'grades' }, gradesHead(null, 0), msg));
+  }
+
+  const anim = S.animate && !reduced();
+  // Media y gráfico por asignatura
+  const sorted = [...sums].filter((c) => typeof c.pct === 'number').sort((a, b) => b.pct - a.pct);
+  const chart = h(
+    'section',
+    { class: 'gcard g-avg', 'aria-labelledby': 'g-avg-h' },
+    h('div', { class: 'g-avg-top' }, h('div', {}, h('h2', { id: 'g-avg-h', class: 'gcard-h', text: 'Media' }), h('p', { class: 'g-avg-sub', text: `de ${sums.length} ${plural(sums.length, 'asignatura', 'asignaturas')}` })), avg !== null ? gradeValue(G.outOfTen(avg), 10, avg, 'is-xl') : h('span', { class: 'g-na', text: 'Sin media numérica' })),
+    sorted.length
+      ? h(
+          'ul',
+          { class: 'g-bars' + (anim ? ' anim' : '') },
+          ...sorted.map((c, i) =>
+            h(
+              'li',
+              {},
+              h(
+                'button',
+                { type: 'button', class: 'g-barrow', dataset: { key: 'gbar:' + c.id }, onclick: () => openCourseGrades(c.id), 'aria-label': `${courseOf(c.id).name}: ${c.formatted}` },
+                courseTag(c.id),
+                h('span', { class: 'g-track' }, h('span', { class: 'g-fill', style: { '--h': String(hueOf(c.id)), '--p': String(c.pct), '--i': String(i) } })),
+                h('span', { class: 'g-num tnum' + (G.gradeTone(c.pct) === 'low' ? ' is-low' : ''), text: G.outOfTen(c.pct) })
+              )
+            )
+          )
+        )
+      : null
+  );
+  const recentCard = h(
+    'section',
+    { class: 'gcard g-recent', 'aria-labelledby': 'g-rec-h' },
+    h('h2', { id: 'g-rec-h', class: 'gcard-h' }, 'Últimas notas', newCount ? h('span', { class: 'g-new', text: `${newCount} ${plural(newCount, 'nueva', 'nuevas')}` }) : null),
+    recent.length
+      ? h(
+          'ul',
+          { class: 'g-rlist' },
+          ...recent.map((it) =>
+            h(
+              'li',
+              {},
+              h(
+                'button',
+                { type: 'button', class: 'g-ritem', dataset: { key: 'gitem:' + it.courseId + ':' + it.id }, onclick: () => openCourseGrades(it.courseId, it.id) },
+                gradeValue(it.formatted, it.max, it.pct, 'is-chip'),
+                h('span', { class: 'g-rmain' }, h('span', { class: 'g-rname', lang, text: it.name }), h('span', { class: 'g-rmeta' }, courseTag(it.courseId), h('span', { text: T.relative(it.graded, now) }), it.graded > seenBefore ? h('span', { class: 'badge is-accent', text: 'Nueva' }) : null))
+              )
+            )
+          )
+        )
+      : h('p', { class: 'g-empty', text: 'Nada calificado en las últimas tres semanas.' })
+  );
+
+  const cards = h(
+    'div',
+    { class: 'g-grid' },
+    ...sums.map((c, i) => {
+      const info = courseOf(c.id);
+      return h(
+        'button',
+        { type: 'button', class: 'g-course' + (anim ? ' anim' : ''), style: { '--h': String(hueOf(c.id)), '--i': String(i) }, dataset: { key: 'gcourse:' + c.id }, onclick: () => openCourseGrades(c.id) },
+        h('span', { class: 'g-chead' }, courseTag(c.id), h('span', { class: 'g-cname', lang, text: info.name })),
+        h('span', { class: 'g-cval' }, gradeValue(c.formatted, c.max, c.pct, 'is-lg'), h('span', { class: 'g-cnote', text: 'nota del curso' })),
+        gradeBar(c.pct, c.id),
+        h('span', { class: 'g-cmeta' }, `${c.gradedCount} ${plural(c.gradedCount, 'calificación', 'calificaciones')}`, c.last ? ` · última ${T.relative(c.last, now)}` : '', info.progress !== null ? ` · ${info.progress} % completado` : '')
+      );
+    })
+  );
+
+  mount(r.list, h('div', { class: 'grades' }, gradesHead(avg, newCount), h('div', { class: 'g-top' }, chart, recentCard), h('div', { class: 'group-head g-gh' }, h('h3', { text: 'Asignaturas' }), h('span', { class: 'cnt', text: String(sums.length) })), cards));
+}
+
+function gradesHead(avg, newCount) {
+  const d = S.data;
+  const now = Date.now();
+  const h1 = h('h1', { tabindex: '-1', dataset: { key: 'h1' }, text: 'Tus notas' });
+  S.refs.h1 = h1;
+  const bits = [];
+  if (avg !== null && avg !== undefined) bits.push(h('span', {}, 'Media de ', h('b', { class: 'tnum', text: G.outOfTen(avg) }), ' sobre 10'));
+  if (newCount) bits.push(h('span', { class: 'pill is-accent', text: `${newCount} ${plural(newCount, 'nueva', 'nuevas')}` }));
+  if (d.grades?.at && !S.demo) bits.push(h('span', { class: 'g-at', text: `Actualizadas ${T.relative(d.grades.at, now)}` }));
+  return h('div', { class: 'g-head' }, h('p', { class: 'eyebrow', text: capital(T.formatDay(now)) }), h1, bits.length ? h('p', { class: 'g-status' }, ...bits) : null);
+}
+
+function openCourseGrades(cid, focusItem = null) {
+  const d = S.data;
+  const g = d?.grades?.courses?.[cid];
+  if (!g) return;
+  const info = courseOf(cid);
+  const lang = contentLang();
+  const now = Date.now();
+  const total = g.total || {};
+  const items = [...(g.items || [])].sort((a, b) => (b.graded || 0) - (a.graded || 0) || a.name.localeCompare(b.name, 'es'));
+  const link = d.site.url && !S.demo ? `${d.site.url}/grade/report/user/index.php?id=${encodeURIComponent(cid)}` : null;
+  openDialog(
+    (close) =>
+      h(
+        'div',
+        { class: 'sheet-wrap', style: { display: 'contents' } },
+        h('div', { class: 'dlg-head' }, h('div', { class: 'sheet-course' }, courseTag(cid), h('span', { lang, text: info.name })), h('button', { type: 'button', class: 'btn btn-icon', 'aria-label': 'Cerrar', onclick: close }, icon('x', 'icon-sm'))),
+        h(
+          'div',
+          { class: 'sheet-body' },
+          h('p', { class: 'sheet-kind' }, icon('chart-bar', 'icon-xs'), 'Notas de la asignatura'),
+          h('h2', { class: 'sheet-title', tabindex: '-1', lang, text: info.name }),
+          h(
+            'div',
+            { class: 'g-total', style: { '--h': String(hueOf(cid)) } },
+            h('div', { class: 'g-total-top' }, h('span', { class: 'g-total-k', text: 'Nota del curso' }), gradeValue(total.formatted || '', total.max, total.pct, 'is-xl')),
+            gradeBar(total.pct, cid),
+            info.progress !== null ? h('p', { class: 'g-total-sub', text: `${info.progress} % de la asignatura completado en Moodle` }) : null
+          ),
+          items.length
+            ? h(
+                'ul',
+                { class: 'g-items' },
+                ...items.map((it) =>
+                  h(
+                    'li',
+                    { class: 'g-item' + (focusItem === it.id ? ' is-focus' : ''), dataset: { item: String(it.id) } },
+                    h(
+                      'div',
+                      { class: 'g-item-top' },
+                      h('span', { class: 'g-iname', lang }, icon(T.kindOf(it.module)[1], 'icon-xs'), h('span', { text: it.name })),
+                      gradeValue(it.formatted, it.max, it.pct)
+                    ),
+                    it.formatted ? gradeBar(it.pct, cid) : null,
+                    h('p', { class: 'g-imeta' }, it.graded ? `Calificada ${T.relative(it.graded, now)}` : 'Sin calificar', it.weight ? ` · pesa ${it.weight}` : ''),
+                    it.feedback ? h('p', { class: 'g-ifb', lang }, icon('chat-text', 'icon-xs'), h('span', { text: it.feedback })) : null
+                  )
+                )
+              )
+            : h('p', { class: 'g-empty', text: 'Esta asignatura aún no tiene calificaciones.' }),
+          link ? h('a', { class: 'btn btn-outline btn-lg btn-block', href: link, target: '_blank', rel: 'noopener noreferrer' }, icon('arrow-up-right', 'icon-sm'), 'Ver en Moodle', h('span', { class: 'sr', text: ' (se abre en otra pestaña)' })) : null
+        )
+      ),
+    { cls: 'sheet' }
+  );
+  setTimeout(() => {
+    const el = focusItem && document.querySelector(`dialog.sheet .g-item[data-item="${focusItem}"]`);
+    if (el) el.scrollIntoView({ block: 'center' });
+    document.querySelector('dialog.sheet .sheet-title')?.focus({ preventScroll: Boolean(el) });
+  }, 30);
 }
 
 // Marcar como hecha: sello, tachado, colapso y luego se vuelve a pintar.
@@ -1976,6 +2208,43 @@ function toggleDone(t, done, li) {
 // Panel de detalle de una tarea
 // ---------------------------------------------------------------------------
 
+// Datos extra de Moodle para una tarea: { a: tarea, sub: tu entrega, q: cuestionario }
+function taskDetails(t) {
+  const x = S.data?.details || {};
+  const id = t.instance || t.cmid;
+  if (!id) return {};
+  if (t.kind === 'assign') return { a: x.assign?.[id], sub: x.sub?.[id] };
+  if (t.kind === 'quiz') return { q: x.quiz?.[id] };
+  return {};
+}
+
+const SUB_LABEL = { new: 'Sin entregar', draft: 'Borrador guardado, aún sin enviar', submitted: 'Entregada', reopened: 'Reabierta: puedes volver a entregar' };
+
+function detailFacts(t, now) {
+  const { a, sub, q } = taskDetails(t);
+  const out = [];
+  const fact = (k, ...v) => out.push(h('dt', { text: k }), h('dd', {}, ...v));
+  if (sub?.status) {
+    fact(
+      'Tu entrega',
+      h('span', { class: 'sub-status is-' + sub.status }, icon(sub.status === 'draft' ? 'pencil-simple-line' : sub.status === 'submitted' ? 'check-circle' : sub.status === 'reopened' ? 'repeat' : 'upload-simple', 'icon-xs'), SUB_LABEL[sub.status]),
+      sub.modified ? h('span', { class: 'fact-sub', text: ` · editada ${T.relative(sub.modified, now)}` }) : null
+    );
+  }
+  if (sub?.extension) fact('Prórroga hasta', capital(T.formatLongDate(sub.extension)));
+  if (a?.cutoff && a.cutoff > t.due) fact('Se acepta hasta', capital(T.formatLongDate(a.cutoff)), h('span', { class: 'fact-sub', text: ' (con retraso)' }));
+  if (a?.opens && a.opens > now) fact('Se abre', capital(T.formatLongDate(a.opens)));
+  if (a?.maxGrade) fact('Nota máxima', `${a.maxGrade} ${a.maxGrade === 1 ? 'punto' : 'puntos'}`);
+  if (a?.files) fact('Material', `${a.files} ${plural(a.files, 'archivo adjunto', 'archivos adjuntos')} en Moodle`);
+  if (q) {
+    if (q.opens && q.opens > now) fact('Se abre', capital(T.formatLongDate(q.opens)));
+    if (q.timeLimit) fact('Tiempo', `${Math.round(q.timeLimit / 60)} min para hacerlo`);
+    if (q.attempts !== null && q.attempts !== undefined) fact('Intentos', q.attempts === 0 ? 'Sin límite' : String(q.attempts));
+    if (q.maxGrade) fact('Nota máxima', String(q.maxGrade).replace('.', ','));
+  }
+  return out;
+}
+
 function openTask(t, opener, how = null) {
   const d = S.data;
   if (!d) return;
@@ -2014,8 +2283,19 @@ function openTask(t, opener, how = null) {
         : null
     ),
     t.actionName ? h('dt', { text: 'En Moodle' }) : null,
-    t.actionName ? h('dd', { lang, text: t.actionName }) : null
+    t.actionName ? h('dd', { lang, text: t.actionName }) : null,
+    ...detailFacts(t, now)
   );
+  const det = taskDetails(t);
+  const feedbackBlock =
+    det.sub && (det.sub.grade || det.sub.feedback)
+      ? h(
+          'div',
+          { class: 'graded-box' },
+          h('p', { class: 'graded-top' }, icon('seal-check', 'icon-sm'), 'Calificada', det.sub.grade ? h('b', { class: 'tnum', text: det.sub.grade }) : null),
+          det.sub.feedback ? h('p', { class: 'graded-fb', lang, text: det.sub.feedback }) : null
+        )
+      : null;
 
   openDialog(
     (close) => {
@@ -2036,6 +2316,7 @@ function openTask(t, opener, how = null) {
           h('p', { class: 'sheet-kind' }, icon(kindIcon, 'icon-xs'), t.kindLabel || kindLabel),
           h('h2', { class: 'sheet-title', tabindex: '-1', lang, text: t.title }),
           chip,
+          feedbackBlock,
           facts,
           t.description ? h('div', { class: 'desc' }, h('h3', { text: 'Descripción' }), h('p', { lang, text: t.description })) : null,
           h(
@@ -2107,6 +2388,15 @@ async function sync() {
     if (client.transport === 'proxy' && d.prefs.transport === 'auto') d.prefs.transport = 'auto';
     await persist();
     if (gen !== S.syncGen) return;
+    S.animate = changed;
+    changed = false;
+    renderDynamic();
+    try {
+      await enrich(client, d, gen);
+    } catch {
+      /* las notas son un extra: si fallan, las tareas siguen bien */
+    }
+    if (gen !== S.syncGen || S.data !== d) return;
     announce('Sincronizado');
     if (merged.gone) toast(`${merged.gone} ${plural(merged.gone, 'tarea ya no aparece', 'tareas ya no aparecen')} en Moodle.`, { icon: 'check-circle', action: { label: 'Ver', fn: () => setView('done') } });
     if (merged.expired) toast(`${merged.expired} ${plural(merged.expired, 'cuestionario se ha cerrado', 'cuestionarios se han cerrado')}.`, { icon: 'info', action: { label: 'Ver', fn: () => setView('done') } });
@@ -2123,6 +2413,59 @@ async function sync() {
       if (S.screen === 'app' && S.data === d) renderDynamic();
     }
   }
+}
+
+// Notas y detalles de las tareas. Pocas peticiones a la vez para no cargar Moodle.
+async function enrich(client, d, gen) {
+  const pref = d.site.lang === 'ca' ? 'ca' : 'es';
+  const now = Date.now();
+  const ids = [
+    ...new Set([...d.courses.filter((c) => !c.hidden && !(c.enddate && c.enddate * 1000 < now - 30 * DAY)).map((c) => c.id), ...d.tasks.map((t) => t.courseId)]),
+  ]
+    .filter(Boolean)
+    .slice(0, 25);
+  if (!ids.length) return;
+  const [ov, asg, qz] = await Promise.all([client.courseGrades().catch(() => null), client.assignments(ids).catch(() => null), client.quizzes(ids).catch(() => null)]);
+  if (gen !== S.syncGen || S.data !== d) return;
+  const itemsRes = await G.pool(ids, 3, (id) => client.gradeItems(id, d.site.userId));
+  const assignIds = [...new Set(d.tasks.filter((t) => t.kind === 'assign' && (t.instance || t.cmid)).map((t) => t.instance || t.cmid))].slice(0, 25);
+  const subsRes = await G.pool(assignIds, 3, (id) => client.submissionStatus(id));
+  if (gen !== S.syncGen || S.data !== d) return;
+
+  const overview = ov ? G.slimOverview(ov) : {};
+  const courses = {};
+  ids.forEach((id, i) => {
+    const slim = itemsRes[i] ? G.slimGradeItems(itemsRes[i], pref) : null;
+    const o = overview[id];
+    if ((slim && (slim.total || slim.items.length)) || (o && o.formatted)) {
+      courses[id] = { total: slim?.total || (o ? { formatted: o.formatted, raw: o.raw, min: null, max: null, pct: null } : null), items: slim?.items || [] };
+    }
+  });
+  const prev = d.grades;
+  const gotGrades = ov || itemsRes.some(Boolean);
+  if (gotGrades) d.grades = { at: now, courses };
+  else if (!prev) d.grades = { at: now, courses: {}, error: 'unavailable' };
+
+  const subs = { ...(d.details?.sub || {}) };
+  assignIds.forEach((id, i) => {
+    if (subsRes[i]) subs[id] = G.submissionInfo(subsRes[i], pref);
+  });
+  d.details = {
+    assign: asg ? G.assignDetails(asg) : d.details?.assign || {},
+    quiz: qz ? G.quizDetails(qz) : d.details?.quiz || {},
+    sub: subs,
+  };
+
+  let fresh = 0;
+  if (gotGrades && prev?.courses && !prev.error) {
+    const seen = new Set();
+    Object.values(prev.courses).forEach((c) => (c.items || []).forEach((it) => it.formatted && seen.add(`${it.id}:${it.formatted}`)));
+    Object.values(d.grades.courses).forEach((c) => (c.items || []).forEach((it) => {
+      if (it.formatted && !seen.has(`${it.id}:${it.formatted}`)) fresh++;
+    }));
+  }
+  await persist();
+  if (fresh) toast(`${fresh} ${plural(fresh, 'nota nueva', 'notas nuevas')} en Moodle.`, { icon: 'chart-bar', action: { label: 'Ver', fn: () => setView('grades') } });
 }
 
 function maybeAutoSync() {

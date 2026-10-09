@@ -157,6 +157,7 @@ test('convierte eventos de Moodle', () => {
     actionName: 'Afegeix una tramesa',
     actionable: true,
     cmid: 412,
+    instance: 412,
     eventtype: 'due',
     description: 'Entregueu un PDF.\nMàxim 2 pàgines.',
     source: 'moodle',

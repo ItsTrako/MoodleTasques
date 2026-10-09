@@ -319,6 +319,27 @@ export class MoodleClient {
     }
     return all;
   }
+
+  // --- Notas y detalles (ver details.js para el formato) ---
+  courseGrades() {
+    return this.call('gradereport_overview_get_course_grades');
+  }
+
+  gradeItems(courseid, userid) {
+    return this.call('gradereport_user_get_grade_items', { courseid, userid });
+  }
+
+  assignments(courseids) {
+    return this.call('mod_assign_get_assignments', { courseids });
+  }
+
+  submissionStatus(assignid) {
+    return this.call('mod_assign_get_submission_status', { assignid });
+  }
+
+  quizzes(courseids) {
+    return this.call('mod_quiz_get_quizzes_by_courses', { courseids });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -459,6 +480,7 @@ export function eventToTask(ev, siteUrl, pref = 'es') {
     actionName: action && action.name ? textOf(action.name, 80, pref) : '',
     actionable,
     cmid: Number(ev.instance) || 0,
+    instance: Number(ev.instance) || 0,
     eventtype: String(ev.eventtype || '').slice(0, 40),
     description: plainText(ev.description, 600, pref),
     source: 'moodle',

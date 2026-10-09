@@ -10,7 +10,8 @@ Hecho para el Moodle del **IES Gabriela Mistral** (la dirección ya viene puesta
 - **Cuenta atrás** hasta la próxima entrega, siempre a la vista.
 - **Franja de 14 días** con la carga de cada día. Haz clic en un día para ver solo lo que vence ese día; otro clic (o Esc) quita el filtro.
 - **Vista Hoy**, con lo que tienes que entregar hoy y nada más.
-- **Panel de detalle** de cada tarea: descripción, asignatura, fecha límite y un botón para **abrirla en Moodle**.
+- **Panel de detalle** de cada tarea: descripción, asignatura, fecha límite y un botón para **abrirla en Moodle**. También muestra el **estado de tu entrega** (sin entregar, borrador guardado, entregada), prórrogas, hasta cuándo se acepta con retraso, la nota máxima, los archivos adjuntos y, en los cuestionarios, el tiempo y los intentos.
+- **Notas:** media general, gráfico por asignatura, últimas notas (con aviso de las nuevas) y, en cada asignatura, todas las calificaciones con los comentarios del profesorado.
 - **Asignaturas con código y color** (por ejemplo FIL o MAT) para reconocerlas de un vistazo, con filtro por asignatura y búsqueda instantánea.
 - **Hechas:** lo que entregas en Moodle sale de la lista y pasa aquí solo. También puedes marcar tareas a mano (solo en tu dispositivo).
 - **Exportar a calendario (.ics)**, una tarea suelta o todas a la vez, con aviso 24 h antes.
@@ -174,6 +175,7 @@ public/
   js/crypto.js            bóveda cifrada
   js/common-passwords.js  contraseñas demasiado comunes (se rechazan)
   js/moodle.js            cliente REST de Moodle
+  js/details.js       notas y detalles de las tareas (puro, probado)
   js/store.js             lógica de tareas (pura, probada)
   js/ics.js               exportación a calendario
   js/demo.js              datos de ejemplo
