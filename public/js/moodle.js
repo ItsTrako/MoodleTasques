@@ -76,9 +76,13 @@ export function friendlyMessage(code) {
   return `Moodle ha devuelto un error (${c}).`;
 }
 
-// Al conectar con un token que Moodle rechaza (invalidtoken o accessexception).
-export const tokenErrorMessage = () =>
-  'Ese token no funciona en este Moodle. Comprueba que lo has copiado entero (32 letras y números) y que es del servicio «Moodle mobile web service».';
+// Al conectar con un token que Moodle rechaza. invalidtoken: no existe (mal
+// copiado, o es la clave RSS, que también tiene 32 letras). accessexception:
+// existía pero ha caducado o se ha anulado.
+export const tokenErrorMessage = (code) =>
+  code === 'accessexception'
+    ? 'Ese token ha caducado o ya no vale. Entra otra vez en la app oficial de Moodle del móvil y copia el token nuevo de Claus de seguretat.'
+    : 'Moodle no reconoce ese token. Copia el de la fila «Moodle mobile web service» (la clave RSS no sirve). Si no tienes esa fila, entra una vez en la app oficial de Moodle del móvil y vuelve a mirar.';
 
 const safeCode = (c) => (typeof c === 'string' && /^[a-z0-9_]{1,60}$/i.test(c) ? c.toLowerCase() : 'moodle');
 

@@ -315,12 +315,11 @@ test('friendlyMessage y el mensaje del token', () => {
   assert.equal(friendlyMessage('wsaccessusernologin'), friendlyMessage('usernotconfirmed'));
   assert.equal(friendlyMessage('http418'), 'Moodle ha devuelto un error (418).');
   assert.equal(friendlyMessage('raro'), 'Moodle ha devuelto un error (raro).');
-  assert.equal(
-    tokenErrorMessage(),
-    'Ese token no funciona en este Moodle. Comprueba que lo has copiado entero (32 letras y números) y que es del servicio «Moodle mobile web service».'
-  );
+  assert.match(tokenErrorMessage('invalidtoken'), /no reconoce.*Moodle mobile web service.*RSS no sirve/);
+  assert.equal(tokenErrorMessage(), tokenErrorMessage('invalidtoken'));
+  assert.match(tokenErrorMessage('accessexception'), /caducado.*app oficial/);
   // Sin rayas ni emojis en los textos para la persona.
-  for (const msg of [...Object.values(FRIENDLY), tokenErrorMessage()]) {
+  for (const msg of [...Object.values(FRIENDLY), tokenErrorMessage('invalidtoken'), tokenErrorMessage('accessexception')]) {
     assert.ok(!/[\u2013\u2014]/.test(msg), msg);
     assert.ok(!/\p{Extended_Pictographic}/u.test(msg), msg);
   }

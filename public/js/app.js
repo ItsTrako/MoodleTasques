@@ -424,7 +424,7 @@ function credsBlock({ mode = 'password', siteUrl = () => '', idPrefix = '' } = {
     'div',
     { class: 'hint', id: token.input.id + '-hint' },
     h('p', {}, 'En tu Moodle: Preferències › Claus de seguretat › «Moodle mobile web service». ', tokLink),
-    h('p', { text: 'Si no ves ningún token, usa tu usuario y contraseña.' })
+    h('p', { text: 'La clave RSS no sirve. Si no ves esa fila, entra una vez en la app oficial de Moodle del móvil y recarga la página.' })
   );
   token.field.append(tokHint);
   token.input.setAttribute('aria-describedby', tokHint.id);
@@ -792,7 +792,7 @@ function renderOnboard(prefill = {}) {
         } catch (err) {
           if (creds.mode === 'token' && (err.code === 'invalidtoken' || err.code === 'accessexception')) {
             focusEl = creds.token.input;
-            throw new MoodleError(tokenErrorMessage(), err.code);
+            throw new MoodleError(tokenErrorMessage(err.code), err.code);
           }
           throw err;
         }
@@ -2526,7 +2526,7 @@ function openReconnect({ title = 'Vuelve a conectar Moodle', changing = false } 
         try {
           info = await client.siteInfo();
         } catch (err) {
-          if (creds.mode === 'token' && (err.code === 'invalidtoken' || err.code === 'accessexception')) throw new MoodleError(tokenErrorMessage(), err.code);
+          if (creds.mode === 'token' && (err.code === 'invalidtoken' || err.code === 'accessexception')) throw new MoodleError(tokenErrorMessage(err.code), err.code);
           throw err;
         }
         if (Number(info.userid) !== d.site.userId) throw new MoodleError('Esa cuenta no es la que tenías conectada. Para cambiar de usuario, borra los datos desde Ajustes.', 'otheruser');

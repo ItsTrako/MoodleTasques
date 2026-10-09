@@ -97,7 +97,7 @@ El Moodle de educaciodigital.cat está en catalán:
 
 1. Entra en el Moodle del instituto: https://educaciodigital.cat/iesgabrielamistral/moodle
 2. Arriba a la derecha, abre tu menú de usuario y ve a **Preferències > Claus de seguretat**. (Dirección directa: https://educaciodigital.cat/iesgabrielamistral/moodle/user/managetoken.php)
-3. Copia la clave del servicio **Moodle mobile web service** y pégala en Tasques.
+3. Copia la clave de la fila **Moodle mobile web service** y pégala en Tasques. La **clave RSS** de esa misma página también tiene 32 letras, pero no sirve.
 
 Si no aparece ninguna clave de ese servicio, entra una vez en la app oficial de Moodle del móvil y vuelve a mirar. Ese token es el mismo que usa la app del móvil: si algún día lo restableces en Moodle, tendrás que pegar el nuevo en Tasques (y volver a entrar en la app del móvil).
 
@@ -112,7 +112,8 @@ Si no aparece ninguna clave de ese servicio, entra una vez en la app oficial de 
 | Página en blanco o «Tasques no se ha abierto bien» | Has abierto `index.html` directamente. Usa `Iniciar.cmd`. |
 | «No se puede acceder a este sitio» o «Tasques está cerrado en tu ordenador» | La ventana negra está cerrada. Vuelve a abrir Tasques y pulsa Sincronizar. |
 | Tasques aparece vacío, como el primer día | Estás en otro navegador, en `localhost` o en otro puerto. Abre Tasques con el icono: siempre usa `http://127.0.0.1:8080`. |
-| «Ese token no funciona en este Moodle» o «Moodle ha rechazado el acceso guardado» | El token está mal copiado o ha caducado. Cópialo otra vez desde *Preferències > Claus de seguretat* y pégalo en Tasques (botón «Reconectar»). Tus tareas marcadas no se pierden. |
+| «Moodle no reconoce ese token» | Has copiado otra clave (por ejemplo la RSS) o no la has copiado entera. Copia la de la fila *Moodle mobile web service*. Si no hay esa fila, entra una vez en la app oficial de Moodle del móvil y recarga *Claus de seguretat*. |
+| «Ese token ha caducado» o «Moodle ha rechazado el acceso guardado» | Entra otra vez en la app oficial de Moodle del móvil, copia el token nuevo de *Preferències > Claus de seguretat* y pégalo en Tasques (botón «Reconectar»). Tus tareas marcadas no se pierden. |
 
 ### Desde PowerShell (opcional)
 
