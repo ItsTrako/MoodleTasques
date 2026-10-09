@@ -1,0 +1,10 @@
+{
+  "_ayuda": "Ajustes de Tasques. Aqui NO va ningun token ni contrasena: eso se escribe en la app y se guarda cifrado en tu navegador.",
+  "schoolName": "IES Gabriela Mistral",
+  "moodleUrl": "https://educaciodigital.cat/iesgabrielamistral/moodle",
+  "loginMode": "token",
+  "port": 8080,
+  "openBrowser": true,
+  "extraAllowedHosts": [],
+  "lockToMoodle": false
+}

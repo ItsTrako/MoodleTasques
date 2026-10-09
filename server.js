@@ -1,167 +1,221 @@
 #!/usr/bin/env node
-// Servidor estático sin dependencias para Tasques.
+// Servidor de Tasques, sin dependencias.
 //
-// - Sirve /public con cabeceras de seguridad estrictas (CSP, HSTS, COOP...).
-// - Opcional: un proxy hacia Moodle para cuando el navegador no puede hablar
-//   con él directamente (CORS). Solo se activa si defines MOODLE_ALLOWED_HOSTS,
-//   y solo reenvía a esos hosts y a dos rutas concretas, para no convertirse
-//   en un proxy abierto. No registra ni guarda nada de lo que pasa por él.
+// - Sirve public/ con cabeceras de seguridad estrictas (CSP, COOP, CORP...).
+// - Lee tasques.config.json (sin secretos): el nombre y la dirección de tu
+//   Moodle, el puerto y si debe abrir el navegador.
+// - Hace de puente (proxy) SOLO hacia tu Moodle, por si el navegador no puede
+//   hablar con él directamente (CORS). No registra ni guarda nada.
+// - Si el puerto ya lo usa otro Tasques, abre ese y sale. Si es otro programa,
+//   prueba los 9 puertos siguientes y avisa de que tus datos están en el de siempre.
 //
-//   PORT=8080 MOODLE_ALLOWED_HOSTS=campus.miinstituto.cat node server.js
+// Uso:  node server.js             (en Windows: doble clic en Iniciar.cmd)
+//       node server.js --no-open   (no abrir el navegador)
+//
+// Variables de entorno (opcionales): PORT, HOST, PUBLIC_HOST,
+// MOODLE_ALLOWED_HOSTS, HTTPS_BEHIND_PROXY=1, NO_COLOR. Ver README.md.
 
 import http from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
-import { extname, join, normalize, sep } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
+import { ConfigError, parseConfigText, resolveConfig, createHandler, proxyEnabled } from './server-lib.js';
 
-const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), 'public');
-const PORT = Number(process.env.PORT) || 8080;
-const HOST = process.env.HOST || '127.0.0.1';
-const ALLOWED = new Set(
-  (process.env.MOODLE_ALLOWED_HOSTS || '')
-    .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean)
-);
-const PROXY_PATHS = new Set(['login/token.php', 'webservice/rest/server.php']);
-const MAX_BODY = 16 * 1024;
-const MAX_UPSTREAM = 8 * 1024 * 1024;
-
-const TYPES = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.woff2': 'font/woff2',
-  '.txt': 'text/plain; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.webmanifest': 'application/manifest+json',
-};
-
-const CSP = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self'",
-  "font-src 'self'",
-  "img-src 'self' data:",
-  "connect-src 'self' https: http://localhost:* http://127.0.0.1:*",
-  "object-src 'none'",
-  "base-uri 'none'",
-  "form-action 'none'",
-  "frame-ancestors 'none'",
-  "require-trusted-types-for 'script'",
-  "trusted-types 'none'",
-].join('; ');
-
-function securityHeaders(res) {
-  res.setHeader('Content-Security-Policy', CSP);
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()');
-  if (process.env.HTTPS_BEHIND_PROXY === '1') res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
-}
-
-function send(res, status, body, type = 'text/plain; charset=utf-8') {
-  res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' });
-  res.end(body);
-}
-
-async function serveStatic(req, res) {
-  let path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  if (path.endsWith('/')) path += 'index.html';
-  const file = normalize(join(ROOT, path));
-  if (!file.startsWith(ROOT + sep)) return send(res, 403, 'Prohibido');
+const DIR = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(DIR, 'public');
+const VERSION = (() => {
   try {
-    const st = await stat(file);
-    if (!st.isFile()) return send(res, 404, 'No encontrado');
-    const body = await readFile(file);
-    const ext = extname(file);
-    res.writeHead(200, {
-      'Content-Type': TYPES[ext] || 'application/octet-stream',
-      'Cache-Control': ext === '.woff2' ? 'public, max-age=31536000, immutable' : 'no-cache',
-    });
-    res.end(req.method === 'HEAD' ? undefined : body);
+    return JSON.parse(readFileSync(join(DIR, 'package.json'), 'utf8')).version || '0';
   } catch {
-    send(res, 404, 'No encontrado');
+    return '0';
+  }
+})();
+
+// --- Mensajes de consola ----------------------------------------------------------
+// Sin símbolos raros: la consola clásica de Windows no siempre los tiene.
+const tty = process.stdout.isTTY && !process.env.NO_COLOR;
+const paint = (code) => (s) => (tty ? `\x1b[${code}m${s}\x1b[0m` : String(s));
+const bold = paint('1'), green = paint('32'), yellow = paint('33'), red = paint('31'), dim = paint('2'), cyan = paint('36');
+const say = (...l) => console.log(...l);
+
+function fail(msg, hint) {
+  console.error('');
+  console.error(red('  Error: ' + msg));
+  if (hint) console.error('  ' + hint);
+  console.error('');
+  process.exit(1);
+}
+
+const [major] = process.versions.node.split('.').map(Number);
+if (major < 20) {
+  fail(`Tasques necesita Node.js 20 o superior (tienes la ${process.versions.node}).`, 'Descarga la versión LTS en https://nodejs.org/es y vuelve a abrir Tasques.');
+}
+
+// --- Configuración -----------------------------------------------------------------
+function loadConfig() {
+  const file = join(DIR, 'tasques.config.json');
+  try {
+    let cfg = {};
+    if (existsSync(file)) {
+      let text;
+      try {
+        text = readFileSync(file, 'utf8');
+      } catch (e) {
+        throw new ConfigError('No puedo abrir tasques.config.json.', `Detalle: ${e.message}`);
+      }
+      const parsed = parseConfigText(text);
+      cfg = parsed.cfg;
+      for (const k of parsed.ignored) {
+        say(yellow(`  Aviso: he ignorado «${k}» de tasques.config.json. Los tokens y contraseñas NUNCA van en ese archivo.`));
+        say(dim('  Escríbelos en la propia app: se guardan cifrados en tu navegador.'));
+      }
+    }
+    const resolved = resolveConfig(cfg, { env: process.env, argv: process.argv.slice(2) });
+    for (const w of resolved.warnings) say(yellow('  Aviso: ' + w));
+    return resolved;
+  } catch (e) {
+    if (e instanceof ConfigError) fail(e.message, e.hint);
+    throw e;
   }
 }
+const CFG = loadConfig();
 
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    let size = 0;
-    const chunks = [];
-    req.on('data', (c) => {
-      size += c.length;
-      if (size > MAX_BODY) {
-        reject(new Error('too-large'));
-        req.destroy();
-      } else chunks.push(c);
-    });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
+let PORT = CFG.port;
+const server = http.createServer(createHandler({ cfg: CFG, root: ROOT, version: VERSION, getPort: () => PORT, env: process.env }));
+server.requestTimeout = 30_000;
+server.headersTimeout = 15_000;
+
+// --- Arranque ----------------------------------------------------------------------
+// Abre el navegador predeterminado. Nunca hace caer el servidor: si no puede,
+// lo dice. La promesa se resuelve cuando se sabe si ha arrancado (o a los 2 s).
+function openBrowser(url) {
+  const sorry = () => say(dim(`  (No he podido abrir el navegador. Abre tú ${url})`));
+  const [cmd, args, opts] =
+    process.platform === 'win32'
+      ? ['cmd', ['/c', 'start', '""', url], { windowsVerbatimArguments: true }]
+      : process.platform === 'darwin'
+        ? ['open', [url], {}]
+        : ['xdg-open', [url], {}];
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, 2000);
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    try {
+      const child = spawn(cmd, args, { ...opts, stdio: 'ignore', detached: true, windowsHide: true });
+      child.on('error', () => {
+        sorry();
+        done();
+      });
+      child.on('spawn', done);
+      child.unref();
+    } catch {
+      sorry();
+      done();
+    }
   });
 }
 
-async function proxy(req, res) {
-  if (!ALLOWED.size) return send(res, 404, 'Proxy desactivado');
-  if (req.method !== 'POST') return send(res, 405, 'Método no permitido');
-  // Solo peticiones de la propia app (mismo origen).
-  const origin = req.headers.origin;
-  const host = req.headers.host;
-  if (origin && new URL(origin).host !== host) return send(res, 403, 'Origen no permitido');
-  if (!String(req.headers['content-type'] || '').startsWith('application/json')) return send(res, 415, 'Se esperaba JSON');
-
-  let payload;
+// ¿Lo que ocupa el puerto es otro Tasques? (también versiones antiguas sin /api/health)
+async function isTasques(port) {
+  const get = (path) => fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.timeout(1500) });
   try {
-    payload = JSON.parse(await readBody(req));
-  } catch {
-    return send(res, 400, 'Petición no válida');
-  }
-  const { site, path, body } = payload || {};
-  if (typeof site !== 'string' || typeof path !== 'string' || typeof body !== 'string') return send(res, 400, 'Petición no válida');
-  if (!PROXY_PATHS.has(path)) return send(res, 403, 'Ruta no permitida');
-  let target;
+    const j = await (await get('/api/health')).json();
+    if (j && j.app === 'tasques') return true;
+  } catch {}
   try {
-    target = new URL(site.replace(/\/+$/, '') + '/' + path);
+    return /<title>Tasques<\/title>/.test(await (await get('/')).text());
   } catch {
-    return send(res, 400, 'Dirección no válida');
-  }
-  if (target.protocol !== 'https:' || !ALLOWED.has(target.hostname.toLowerCase()) || target.username || target.password || target.port) {
-    return send(res, 403, 'Host no permitido');
-  }
-
-  try {
-    const upstream = await fetch(target, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json', 'User-Agent': 'Tasques/1.0' },
-      body,
-      redirect: 'error',
-      signal: AbortSignal.timeout(20_000),
-    });
-    const buf = Buffer.from(await upstream.arrayBuffer());
-    if (buf.length > MAX_UPSTREAM) return send(res, 502, 'Respuesta demasiado grande');
-    send(res, upstream.status, buf, 'application/json; charset=utf-8');
-  } catch {
-    send(res, 502, JSON.stringify({ exception: 'proxy', errorcode: 'network', message: 'No se ha podido contactar con Moodle desde el servidor.' }), 'application/json; charset=utf-8');
+    return false;
   }
 }
 
-const server = http.createServer(async (req, res) => {
-  securityHeaders(res);
-  try {
-    const { pathname } = new URL(req.url, 'http://x');
-    if (pathname === '/api/proxy') return await proxy(req, res);
-    if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Método no permitido');
-    return await serveStatic(req, res);
-  } catch {
-    send(res, 500, 'Error interno');
-  }
-});
+function listen(port) {
+  return new Promise((resolve, reject) => {
+    const onErr = (e) => {
+      server.off('listening', onOk);
+      reject(e);
+    };
+    const onOk = () => {
+      server.off('error', onErr);
+      resolve();
+    };
+    server.once('error', onErr);
+    server.once('listening', onOk);
+    server.listen(port, CFG.host);
+  });
+}
 
-server.listen(PORT, HOST, () => {
-  console.log(`Tasques en http://${HOST}:${PORT}`);
-  console.log(ALLOWED.size ? `Proxy activo para: ${[...ALLOWED].join(', ')}` : 'Proxy desactivado (define MOODLE_ALLOWED_HOSTS para activarlo).');
-});
+async function start() {
+  const wanted = CFG.port;
+  const last = Math.min(wanted + 9, 65535);
+  for (let port = wanted; port <= last; port++) {
+    PORT = port;
+    try {
+      await listen(port);
+      return banner(port, wanted);
+    } catch (e) {
+      // EACCES en Windows suele ser un rango de puertos reservado por Hyper-V, WSL o Docker.
+      if (e.code === 'EADDRINUSE' || e.code === 'EACCES') {
+        if (await isTasques(port)) {
+          const url = `http://127.0.0.1:${port}/`;
+          say('');
+          say('  ' + green('Tasques ya estaba abierto en ') + cyan(url));
+          if (CFG.open) {
+            say('  Te lo abro en el navegador.');
+            await openBrowser(url);
+          }
+          say(dim('  Esta ventana se puede cerrar.'));
+          say('');
+          process.exit(0);
+        }
+        if (port === wanted) {
+          say(yellow(`  Aviso: el puerto ${port} ${e.code === 'EACCES' ? 'está reservado por Windows' : 'lo está usando otro programa'}. Pruebo el siguiente...`));
+        }
+        continue;
+      }
+      fail(`No he podido arrancar el servidor: ${e.message}`);
+    }
+  }
+  fail(`Los puertos ${wanted} a ${last} están ocupados.`, 'Cierra otros programas o cambia "port" en tasques.config.json.');
+}
+
+function banner(port, wanted) {
+  const url = `http://127.0.0.1:${port}/`;
+  const pc = CFG.publicConfig;
+  say('');
+  say('  ' + bold('Tasques') + dim(` v${VERSION}`));
+  say('  ' + green('Listo en ') + cyan(url));
+  if (pc.moodleUrl) say('  ' + dim('Moodle: ') + (pc.schoolName ? pc.schoolName + ' · ' : '') + pc.moodleUrl);
+  if (proxyEnabled(CFG)) {
+    const to = [...(pc.moodleUrl ? ['ese Moodle'] : []), ...CFG.allowedHosts].join(', ');
+    say('  ' + dim(`Puente con Moodle: activo, solo hacia ${to}.`));
+  }
+  if (CFG.connectOrigin) say('  ' + dim(`La app solo puede conectarse a ${CFG.connectOrigin} (lockToMoodle).`));
+  if (port !== wanted) {
+    say('');
+    say(yellow(`  Aviso: estás en el puerto ${port}, no en el ${wanted} de siempre.`));
+    say(yellow(`  Tus datos guardados están en http://127.0.0.1:${wanted}/ y aquí no se verán.`));
+    say(yellow(`  Cierra el programa que usa el ${wanted} y vuelve a abrir Tasques para recuperarlos.`));
+  }
+  if (!['127.0.0.1', 'localhost', '::1'].includes(CFG.host)) {
+    say('');
+    say(yellow(`  Aviso: escucho en ${CFG.host}, así que otros equipos de la red pueden llegar a Tasques.`));
+    if (!CFG.publicHost) say(yellow('  Define PUBLIC_HOST con el nombre que usarán (por ejemplo tasques.midominio.cat), o responderé 421.'));
+  }
+  say('');
+  say(dim('  Deja esta ventana abierta mientras uses Tasques. Para apagarlo, ciérrala.'));
+  say('');
+  if (CFG.open) openBrowser(url);
+}
+
+const bye = () => {
+  say(dim('\n  Tasques apagado. ¡Hasta luego!\n'));
+  process.exit(0);
+};
+process.on('SIGINT', bye);
+process.on('SIGTERM', bye);
+
+start();

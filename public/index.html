@@ -6,8 +6,8 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'self'; require-trusted-types-for 'script'; trusted-types 'none'">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#14161b" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f8f9fb" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0d11" media="(prefers-color-scheme: dark)">
   <meta name="description" content="Las tareas que te quedan en Moodle, ordenadas por fecha y cifradas en tu navegador.">
   <title>Tasques</title>
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
@@ -17,9 +17,15 @@
 </head>
 <body>
   <a class="skip" href="#main">Saltar al contenido</a>
-  <div id="app" aria-live="polite">
+  <div id="app">
     <noscript><p class="noscript">Tasques necesita JavaScript para descifrar tus datos en el navegador.</p></noscript>
+    <div class="boot-hint">
+      <h1>Tasques no se ha abierto bien</h1>
+      <p>Parece que has abierto el archivo <code>index.html</code> directamente. Así el navegador no deja funcionar la app.</p>
+      <p>Cierra esta pestaña y haz doble clic en <strong>Iniciar.cmd</strong>, dentro de la carpeta MoodleTasques.</p>
+    </div>
   </div>
-  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  <div id="toasts" class="toasts" popover="manual" role="status"></div>
+  <p id="sr-status" class="sr" role="status"></p>
 </body>
 </html>

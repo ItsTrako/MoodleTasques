@@ -9,6 +9,8 @@
 // La CryptoKey se crea como no extraíble y solo vive en memoria mientras la
 // sesión está desbloqueada. La frase de acceso no se guarda nunca.
 
+import { COMMON_PASSWORDS } from './common-passwords.js';
+
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
@@ -63,9 +65,58 @@ export async function open(key, box) {
   return JSON.parse(dec.decode(pt));
 }
 
-// Estimación aproximada de la entropía de la frase (bits). Solo orienta al usuario.
-export function passphraseStrength(p) {
+// ---------------------------------------------------------------------------
+// Fuerza de la frase de acceso
+// ---------------------------------------------------------------------------
+
+const LEET = { 0: 'o', 1: 'i', 3: 'e', 4: 'a', 5: 's', 7: 't', '@': 'a', $: 's' };
+const lowerFold = (s) => String(s).normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim();
+const stripEnds = (s) => s.replace(/^[\d\W_]+|[\d\W_]+$/g, '');
+const unleet = (s) => s.replace(/[013457@$]/g, (c) => LEET[c]);
+const compact = (s) => s.replace(/[^a-z0-9]+/g, '');
+
+// Formas con las que se compara una contraseña con la lista: tal cual, sin
+// números ni símbolos en los extremos y sin leetspeak ("P@ssw0rd1" -> "password").
+function variants(p) {
+  const b = lowerFold(p);
+  const out = new Set([b]);
+  for (const v of [unleet(stripEnds(b)), stripEnds(unleet(b))]) {
+    if (v.length >= 3) {
+      out.add(v);
+      out.add(v.replace(/\s+/g, ''));
+    }
+  }
+  return out;
+}
+
+let commonForms = null;
+let commonWords = null;
+function loadCommon() {
+  if (commonForms) return;
+  commonForms = new Set();
+  for (const w of COMMON_PASSWORDS) variants(w).forEach((v) => commonForms.add(v));
+  // Palabras de la lista que cuentan como una sola pieza dentro de una frase.
+  commonWords = [...commonForms].filter((w) => w.length >= 5 && /^[a-z]+$/.test(w)).sort((a, b) => b.length - a.length);
+}
+
+export function isCommonPassword(p) {
+  loadCommon();
+  return [...variants(p)].some((v) => commonForms.has(v));
+}
+
+const GENERIC = new Set(['http', 'https', 'www', 'com', 'cat', 'org', 'net', 'edu', 'php', 'html', 'index']);
+const contextTokens = (context) =>
+  [...new Set((Array.isArray(context) ? context : [context]).flatMap((c) => lowerFold(c ?? '').split(/[^a-z0-9]+/)))].filter(
+    (t) => t.length >= 3 && !GENERIC.has(t)
+  );
+
+// Estimación aproximada de la entropía de la frase (bits). Solo orienta al
+// usuario, pero el nivel 2 es el mínimo para crear la bóveda.
+// context: nombre del centro, dirección de Moodle, nombre y usuario. Cada una
+// de esas palabras que aparezca en la frase resta 20 bits.
+export function passphraseStrength(p, context = []) {
   if (!p) return { bits: 0, label: 'Vacía', level: 0 };
+  if (isCommonPassword(p)) return { bits: 0, label: 'Muy común', level: 0 };
   let pool = 0;
   if (/[a-z]/.test(p)) pool += 26;
   if (/[A-Z]/.test(p)) pool += 26;
@@ -79,7 +130,35 @@ export function passphraseStrength(p) {
     effective += step !== null && Math.abs(step) <= 1 ? 0.25 : 1;
   });
   const unique = new Set(p).size;
-  const bits = Math.round(Math.min(effective, unique * 1.5) * Math.log2(Math.max(pool, 1)));
+  let bits = Math.min(effective, unique * 1.5) * Math.log2(Math.max(pool, 1));
+
+  // Una palabra de la lista de contraseñas comunes vale unos 11 bits, no lo
+  // que sumarían sus letras una a una.
+  loadCommon();
+  const perChar = bits / Math.max(cps.length, 1);
+  const flat = compact(unleet(lowerFold(p)));
+  const covered = new Array(flat.length).fill(false);
+  for (const w of commonWords) {
+    let i = flat.indexOf(w);
+    while (i !== -1) {
+      if (!covered.slice(i, i + w.length).some(Boolean)) {
+        covered.fill(true, i, i + w.length);
+        bits -= Math.max(0, w.length * perChar - 11);
+      }
+      i = flat.indexOf(w, i + 1);
+    }
+  }
+
+  // Palabras del contexto (el centro, tu nombre...): fáciles de adivinar. Las
+  // cortas solo cuentan como palabra suelta ("pau", no "pausa").
+  const plain = compact(lowerFold(p));
+  const words = new Set([lowerFold(p), unleet(lowerFold(p))].flatMap((s) => s.split(/[^a-z0-9]+/)));
+  for (const t of contextTokens(context)) {
+    const hit = t.length < 5 ? words.has(t) : plain.includes(t) || flat.includes(t) || flat.includes(unleet(t));
+    if (hit) bits -= 20;
+  }
+
+  bits = Math.max(0, Math.round(bits));
   if (bits < 40) return { bits, label: 'Débil', level: 1 };
   if (bits < 60) return { bits, label: 'Aceptable', level: 2 };
   if (bits < 80) return { bits, label: 'Fuerte', level: 3 };
@@ -87,6 +166,25 @@ export function passphraseStrength(p) {
 }
 
 export const MIN_PASSPHRASE = 8;
+
+const MIN_ITERATIONS = KDF_ITERATIONS;
+const MAX_ITERATIONS = 10_000_000;
+
+function vaultError(message, code) {
+  const err = new Error(message);
+  err.code = code;
+  return err;
+}
+const damaged = () => vaultError('Los datos guardados están dañados.', 'damaged');
+
+function b64Length(str) {
+  if (typeof str !== 'string' || !str) return -1;
+  try {
+    return fromB64(str).length;
+  } catch {
+    return -1;
+  }
+}
 
 // Persistencia: un único registro con la sal, los parámetros del KDF y el bloque cifrado.
 export class Vault {
@@ -98,20 +196,37 @@ export class Vault {
     this.iterations = KDF_ITERATIONS;
   }
 
+  // Lee y valida el registro guardado. Devuelve null si no hay ninguno y lanza
+  // un error si está dañado o manipulado (iteraciones fuera de rango, sal o IV
+  // con otra longitud...), para no colgar el descifrado ni mostrar errores crudos.
   read() {
+    let raw;
     try {
-      const raw = this.storage.getItem(this.storageKey);
-      if (!raw) return null;
-      const rec = JSON.parse(raw);
-      if (rec.v !== VAULT_VERSION || rec.kdf !== 'PBKDF2-SHA256' || !rec.salt || !rec.box) return null;
-      return rec;
+      raw = this.storage.getItem(this.storageKey);
     } catch {
       return null;
     }
+    if (!raw) return null;
+    let rec;
+    try {
+      rec = JSON.parse(raw);
+    } catch {
+      throw damaged();
+    }
+    if (!rec || typeof rec !== 'object' || rec.v !== VAULT_VERSION || rec.kdf !== 'PBKDF2-SHA256') throw damaged();
+    if (!Number.isInteger(rec.iter) || rec.iter < MIN_ITERATIONS || rec.iter > MAX_ITERATIONS) throw damaged();
+    if (!rec.box || typeof rec.box !== 'object' || typeof rec.box.ct !== 'string' || !rec.box.ct) throw damaged();
+    if (b64Length(rec.salt) !== 16 || b64Length(rec.box.iv) !== 12) throw damaged();
+    return rec;
   }
 
+  // Hay algo guardado (aunque esté dañado: entonces unlock() lo explica).
   exists() {
-    return this.read() !== null;
+    try {
+      return Boolean(this.storage.getItem(this.storageKey));
+    } catch {
+      return false;
+    }
   }
 
   get unlocked() {
@@ -130,15 +245,20 @@ export class Vault {
 
   async unlock(passphrase) {
     const rec = this.read();
-    if (!rec) throw new Error('No hay ninguna bóveda guardada.');
+    if (!rec) throw vaultError('No hay ninguna bóveda guardada.', 'nodata');
     const salt = fromB64(rec.salt);
-    const key = await deriveKey(passphrase, salt, rec.iter);
+    let key;
+    try {
+      key = await deriveKey(String(passphrase ?? ''), salt, rec.iter);
+    } catch {
+      throw damaged();
+    }
     let data;
     try {
       data = await open(key, rec.box);
     } catch {
       // AES-GCM falla la verificación de integridad si la clave no es la correcta.
-      throw new Error('Frase de acceso incorrecta.');
+      throw vaultError('Frase de acceso incorrecta.', 'badpass');
     }
     this.key = key;
     this.salt = salt;
