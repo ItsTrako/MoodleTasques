@@ -1,0 +1,15 @@
+{
+  "name": "moodletasques",
+  "version": "1.0.0",
+  "description": "Las tareas que te quedan en Moodle, cifradas en tu navegador.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  }
+}
