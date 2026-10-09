@@ -1,0 +1,40 @@
+# Tasques en Netlify
+#
+# 1. En Netlify: Add new site > Import an existing project > GitHub > este repositorio.
+# 2. No hace falta tocar nada más: esta configuración publica la carpeta public/
+#    y crea la función del puente con Moodle (netlify/functions/api.mjs).
+# 3. Opcional, en Site configuration > Environment variables:
+#      MOODLE_URL   otra dirección de Moodle (por defecto, la de tasques.config.json)
+#      SCHOOL_NAME  nombre del centro que se muestra al conectar
+
+[build]
+  publish = "public"
+  command = ""
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  included_files = ["tasques.config.json", "package.json"]
+
+# Cabeceras de seguridad (las mismas que en server.js).
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self' https:; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'self'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "no-referrer"
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Resource-Policy = "same-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    Strict-Transport-Security = "max-age=63072000; includeSubDomains"
+
+[[headers]]
+  for = "/assets/fonts/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Content-Type = "application/manifest+json"

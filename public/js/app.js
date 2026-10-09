@@ -2832,6 +2832,11 @@ function notice(title, body) {
 }
 
 async function boot() {
+  try {
+    navigator.storage?.persist?.().catch(() => {});
+  } catch {
+    /* sin soporte: no pasa nada */
+  }
   if (!globalThis.crypto || !crypto.subtle) {
     return notice('Abre Tasques con Iniciar.cmd', 'El cifrado del navegador solo funciona en páginas seguras (https://) o en tu propio ordenador (http://127.0.0.1). Cierra esta pestaña y abre Tasques con Iniciar.cmd.');
   }

@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="#en-windows-lo-más-fácil">Instalar</a> ·
+  <a href="#en-una-web-para-todos-netlify">Netlify</a> ·
   <a href="#qué-hace">Qué hace</a> ·
   <a href="#preguntas-frecuentes">Preguntas</a> ·
   <a href="#seguridad">Seguridad</a>
@@ -133,6 +134,25 @@ npm run dev          # igual, pero sin abrir el navegador
 npm test             # pruebas (node:test)
 ```
 
+## En una web para todos (Netlify)
+
+Así nadie tiene que instalar nada: cada uno abre el enlace, también desde el móvil.
+
+1. Crea una cuenta gratis en [netlify.com](https://www.netlify.com/) (puedes entrar con GitHub).
+2. **Add new site › Import an existing project › GitHub** y elige este repositorio.
+3. Pulsa **Deploy**. No hace falta tocar nada: [`netlify.toml`](netlify.toml) publica la carpeta `public/`, añade las cabeceras de seguridad y crea la función del puente con Moodle ([`netlify/functions/api.mjs`](netlify/functions/api.mjs)).
+4. En **Site configuration › Change site name** ponle un nombre, por ejemplo `tasques-gabriela`, y tendrás `https://tasques-gabriela.netlify.app`.
+5. Comparte el enlace. Cada persona pone su propio token y su frase: sus datos se quedan cifrados en su navegador y nadie más los ve.
+
+**En el móvil se instala como una app:** en Android (Chrome), menú ⋮ › *Instalar app* o *Añadir a pantalla de inicio*; en iPhone (Safari), *Compartir › Añadir a pantalla de inicio*.
+
+Cada vez que subas cambios a GitHub, Netlify publica la nueva versión solo. Para otro centro, define en Netlify (*Site configuration › Environment variables*) `MOODLE_URL` y `SCHOOL_NAME`.
+
+Bueno saberlo:
+
+- **iPhone:** si no abres la web en 7 días, Safari puede borrar los datos guardados (no pasa si la añades a la pantalla de inicio). Solo tendrías que volver a poner el token.
+- **El puente:** la app intenta hablar directamente con Moodle desde el navegador. Solo si Moodle no lo permite, las peticiones pasan por la función de Netlify de quien publica la web. No guarda nada, pero quien controla la web controla el código: usad la web de alguien de confianza o publicad la vuestra.
+
 ## Primer uso
 
 1. La dirección del Moodle ya viene puesta (sale de `tasques.config.json`). Pega tu token o, si tu Moodle lo permite, entra con usuario y contraseña.
@@ -158,7 +178,7 @@ Si tu Moodle tiene activada la app móvil, sí. Cambia `moodleUrl` y `schoolName
 No. Solo cambia tu lista. Para entregar, usa el botón «Abrir en Moodle» del panel de la tarea.
 
 **¿Y en el móvil?**
-La interfaz está pensada también para el móvil, pero Tasques se ejecuta en tu ordenador. Para usarlo desde el móvil hay que publicarlo con HTTPS (ver [Despliegue](#despliegue)).
+Sí, si alguien lo publica en una web (ver [Netlify](#en-una-web-para-todos-netlify)). En el móvil se puede añadir a la pantalla de inicio y se abre como una app.
 
 **No veo las notas.**
 Algunos centros no comparten el informe de calificaciones con la app. En ese caso Tasques lo indica y las tareas siguen funcionando igual.
@@ -236,10 +256,13 @@ Iniciar.cmd               abrir Tasques en Windows (doble clic)
 CrearAccesoDirecto.cmd    icono en el Escritorio y en el menú Inicio
 Actualizar.cmd            descargar la última versión (git pull)
 tasques.config.json       tu Moodle, el puerto... (sin secretos)
+netlify.toml              publicar en Netlify (carpeta, cabeceras, función)
+netlify/functions/api.mjs /api/config, /api/health y el puente en Netlify
 server.js                 arranque: puerto, navegador y mensajes
 server-lib.js             servidor: archivos, cabeceras, /api/config y puente
 public/
   index.html              CSP y punto de entrada
+  manifest.webmanifest    para instalarlo en el móvil como una app
   css/app.css             sistema visual (tokens claro y oscuro)
   js/app.js               pantallas e interacción
   js/dom.js               utilidades del DOM
