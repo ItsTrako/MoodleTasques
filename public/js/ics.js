@@ -36,6 +36,7 @@ function fold(line) {
 export function buildIcs(tasks, now = Date.now()) {
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//MoodleTasques//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:Tasques de Moodle'];
   tasks.forEach((t) => {
+    if (!Number.isFinite(t.due)) return;
     lines.push(
       'BEGIN:VEVENT',
       `UID:${escapeText(t.id)}@moodletasques`,

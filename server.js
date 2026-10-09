@@ -155,6 +155,8 @@ async function start() {
     PORT = port;
     try {
       await listen(port);
+      // Un fallo posterior (por ejemplo, demasiados archivos abiertos) no debe cerrar Tasques.
+      server.on('error', (err) => console.error(yellow(`  Aviso: ${err.message}`)));
       return banner(port, wanted);
     } catch (e) {
       // EACCES en Windows suele ser un rango de puertos reservado por Hyper-V, WSL o Docker.
@@ -163,6 +165,7 @@ async function start() {
           const url = `http://127.0.0.1:${port}/`;
           say('');
           say('  ' + green('Tasques ya estaba abierto en ') + cyan(url));
+          if (port !== wanted) dataWarning(port, wanted);
           if (CFG.open) {
             say('  Te lo abro en el navegador.');
             await openBrowser(url);
@@ -182,6 +185,13 @@ async function start() {
   fail(`Los puertos ${wanted} a ${last} están ocupados.`, 'Cierra otros programas o cambia "port" en tasques.config.json.');
 }
 
+// Los datos cifrados van ligados a la dirección exacta (puerto incluido).
+function dataWarning(port, wanted) {
+  say(yellow(`  Aviso: estás en el puerto ${port}, no en el ${wanted} de siempre.`));
+  say(yellow(`  Tus datos guardados están en http://127.0.0.1:${wanted}/ y aquí no se verán.`));
+  say(yellow(`  Cierra el programa que usa el ${wanted} y vuelve a abrir Tasques para recuperarlos.`));
+}
+
 function banner(port, wanted) {
   const url = `http://127.0.0.1:${port}/`;
   const pc = CFG.publicConfig;
@@ -196,9 +206,7 @@ function banner(port, wanted) {
   if (CFG.connectOrigin) say('  ' + dim(`La app solo puede conectarse a ${CFG.connectOrigin} (lockToMoodle).`));
   if (port !== wanted) {
     say('');
-    say(yellow(`  Aviso: estás en el puerto ${port}, no en el ${wanted} de siempre.`));
-    say(yellow(`  Tus datos guardados están en http://127.0.0.1:${wanted}/ y aquí no se verán.`));
-    say(yellow(`  Cierra el programa que usa el ${wanted} y vuelve a abrir Tasques para recuperarlos.`));
+    dataWarning(port, wanted);
   }
   if (!['127.0.0.1', 'localhost', '::1'].includes(CFG.host)) {
     say('');

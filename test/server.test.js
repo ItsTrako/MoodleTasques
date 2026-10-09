@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import {
   proxyTarget,
   okHosts,
@@ -40,6 +41,14 @@ test('proxyTarget: rejects sites that smuggle another path, query or fragment', 
     'https://localhost/./moodle',
     'https://localhost:8443/moodle',
     'https://user:pw@localhost/moodle',
+    'https://localhost/lib/ajax/service.php%20',
+    'https://localhost/lib/ajax/service.php.',
+    'https://localhost/lib/ajax/service.php::$DATA',
+    'https://localhost/a%5cb',
+    'https://localhost/a%00',
+    'https://localhost/%E0%A4%A',
+    'HTTPS://LOCALHOST/moodle',
+    'https://localhost\\moodle',
   ]) {
     assert.equal(proxyTarget(site, 'login/token.php', SITES, LOCALHOST), null, site);
   }
@@ -69,6 +78,9 @@ test('proxyTarget: host allowlist (MOODLE_ALLOWED_HOSTS / extraAllowedHosts) cov
   assert.equal(proxyTarget('https://campus.example.cat', 'login/token.php', new Set(), hosts).href, 'https://campus.example.cat/login/token.php');
   assert.equal(proxyTarget('https://campus.example.cat/moodle', 'login/token.php', new Set(), hosts).href, 'https://campus.example.cat/moodle/login/token.php');
   assert.equal(proxyTarget('https://other.example.cat/moodle', 'login/token.php', new Set(), hosts), null);
+  // What the client's normalizeSiteUrl() sends for a path with an accent or a space still works.
+  const acc = new URL('https://campus.example.cat/Mòdul 2/moodle');
+  assert.equal(proxyTarget(acc.origin + acc.pathname, 'login/token.php', new Set(), hosts).pathname, '/M%C3%B2dul%202/moodle/login/token.php');
 });
 
 test('okHosts: loopback names on the current port, plus PUBLIC_HOST', () => {
@@ -85,6 +97,11 @@ test('okHosts: loopback names on the current port, plus PUBLIC_HOST', () => {
   assert.ok(hostAllowed('LOCALHOST:8080', h));
   assert.ok(!hostAllowed(undefined, h));
   assert.ok(!hostAllowed('', h));
+  // Browsers leave the default port out of Host and Origin.
+  const p80 = okHosts(80);
+  assert.ok(p80.has('127.0.0.1') && p80.has('localhost') && p80.has('[::1]') && p80.has('127.0.0.1:80'));
+  assert.ok(!h.has('127.0.0.1'));
+  assert.equal(sameOrigin({ origin: 'http://127.0.0.1' }, p80), true);
 });
 
 test('sameOrigin: Origin is required and must be ours; Sec-Fetch-Site must be same-origin', () => {
@@ -109,7 +126,7 @@ test('isJsonType: exact media type', () => {
 });
 
 test('config: BOM, invalid JSON and secret keys', () => {
-  const { cfg, ignored } = parseConfigText('﻿{"moodleUrl":"' + SCHOOL + '","token":"abc","wsPassword":"x","claveMoodle":"y"}');
+  const { cfg, ignored } = parseConfigText('\uFEFF{"moodleUrl":"' + SCHOOL + '","token":"abc","wsPassword":"x","claveMoodle":"y"}');
   assert.deepEqual(ignored, ['token', 'wsPassword', 'claveMoodle']);
   assert.deepEqual(Object.keys(cfg), ['moodleUrl']);
   assert.throws(() => parseConfigText('{"port": 8080,}'), ConfigError);
@@ -148,6 +165,10 @@ test('config: env, flags and validation', () => {
   assert.equal(r.moodleUrl, SCHOOL);
   assert.deepEqual([...r.allowedHosts].sort(), ['a.example', 'b.example', 'campus.example.cat']);
   assert.equal(r.publicConfig.loginMode, 'password');
+
+  const odd = resolveConfig({ extraAllowedHosts: ['https://Campus.Example.cat/moodle', 'a b', '*.cat', ''] }, { env: { MOODLE_ALLOWED_HOSTS: ' , x.example' } });
+  assert.deepEqual([...odd.allowedHosts].sort(), ['campus.example.cat', 'x.example']);
+  assert.equal(odd.warnings.length, 2);
 
   const bad = resolveConfig(base, { env: { PORT: '99999' } });
   assert.equal(bad.port, 8080);
@@ -336,4 +357,124 @@ test('http: lockToMoodle sends the pinned CSP', async () => {
     const page = await req(port, { path: '/' });
     assert.match(page.headers['content-security-policy'], /connect-src 'self' https:\/\/educaciodigital\.cat;/);
   });
+});
+
+// --- Windows launchers, icon and startup --------------------------------------------
+
+test('windows: .cmd launchers are ASCII-only with CRLF line endings', () => {
+  for (const name of ['Iniciar.cmd', 'CrearAccesoDirecto.cmd', 'Actualizar.cmd']) {
+    const buf = readFileSync(new URL('../' + name, import.meta.url));
+    assert.ok(buf.every((b) => b < 0x80), `${name} must be ASCII-only (cmd.exe reads it in the OEM code page)`);
+    const text = buf.toString('latin1');
+    assert.ok(text.endsWith('\r\n'), `${name} ends with CRLF`);
+    assert.equal(text.split('\r\n').join('').includes('\n'), false, `${name} has a bare LF (check .gitattributes)`);
+  }
+  const shortcut = readFileSync(new URL('../CrearAccesoDirecto.cmd', import.meta.url), 'latin1');
+  assert.match(shortcut, /public\\assets\\tasques\.ico/);
+});
+
+test('windows: tasques.ico is a PNG-in-ICO from 16 to 256 px', () => {
+  const ico = readFileSync(new URL('../public/assets/tasques.ico', import.meta.url));
+  assert.equal(ico.readUInt16LE(0), 0);
+  assert.equal(ico.readUInt16LE(2), 1);
+  const n = ico.readUInt16LE(4);
+  const sizes = [];
+  for (let i = 0; i < n; i++) {
+    const e = 6 + i * 16;
+    sizes.push(ico[e] || 256);
+    const off = ico.readUInt32LE(e + 12);
+    const len = ico.readUInt32LE(e + 8);
+    assert.ok(off + len <= ico.length);
+    assert.equal(ico.subarray(off, off + 8).toString('hex'), '89504e470d0a1a0a', 'PNG payload');
+  }
+  assert.ok(sizes.includes(16) && sizes.includes(32) && sizes.includes(48) && sizes.includes(256), String(sizes));
+});
+
+function freePort() {
+  return new Promise((resolve) => {
+    const s = http.createServer();
+    s.listen(0, '127.0.0.1', () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+}
+
+function runServer(port, args = ['--no-open']) {
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../server.js', import.meta.url)), ...args], {
+    env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', CI: '1', NO_COLOR: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  child.stdout.on('data', (c) => (out += c));
+  child.stderr.on('data', (c) => (out += c));
+  const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
+  const until = (re, ms = 8000) =>
+    new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const tick = () => {
+        if (re.test(out)) return resolve(out);
+        if (Date.now() - t0 > ms) return reject(new Error('timeout waiting for ' + re + '\n' + out));
+        setTimeout(tick, 50);
+      };
+      tick();
+    });
+  return { child, exited, until, output: () => out };
+}
+
+test('startup: a second copy on the same port sees Tasques running and exits 0', async () => {
+  const port = await freePort();
+  const first = runServer(port);
+  try {
+    await first.until(/Listo en http:\/\/127\.0\.0\.1:\d+\//);
+    assert.match(first.output(), new RegExp(`127\\.0\\.0\\.1:${port}/`));
+    const second = runServer(port);
+    const code = await Promise.race([second.exited, new Promise((r) => setTimeout(() => r('timeout'), 8000))]);
+    if (code === 'timeout') second.child.kill();
+    assert.equal(code, 0, second.output());
+    assert.match(second.output(), /Tasques ya estaba abierto en http:\/\/127\.0\.0\.1:\d+\//);
+  } finally {
+    first.child.kill();
+    await first.exited;
+  }
+});
+
+test('startup: a port held by another program falls back to the next one with a data warning', async () => {
+  // Another program (not Tasques) on the preferred port.
+  const other = http.createServer((q, r) => r.end('otro programa'));
+  await new Promise((r) => other.listen(0, '127.0.0.1', r));
+  const port = other.address().port;
+  const srv = runServer(port);
+  try {
+    const out = await srv.until(/Listo en http:\/\/127\.0\.0\.1:\d+\/|Error:/);
+    assert.match(out, /lo est. usando otro programa/);
+    const used = Number(/Listo en http:\/\/127\.0\.0\.1:(\d+)\//.exec(out)?.[1]);
+    assert.ok(used > port && used <= port + 9, out);
+    assert.match(out, new RegExp(`Tus datos guardados est.n en http://127\\.0\\.0\\.1:${port}/`));
+  } finally {
+    srv.child.kill();
+    await srv.exited;
+    await new Promise((r) => other.close(r));
+  }
+});
+
+test('startup: a broken tasques.config.json is reported in Spanish, not as a stack trace', async () => {
+  const { mkdtempSync, writeFileSync, copyFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'tasques-'));
+  try {
+    for (const f of ['server.js', 'server-lib.js', 'package.json']) copyFileSync(fileURLToPath(new URL('../' + f, import.meta.url)), join(dir, f));
+    writeFileSync(join(dir, 'tasques.config.json'), '{"moodleUrl": "http://inseguro.example/moodle",}');
+    const child = spawn(process.execPath, [join(dir, 'server.js'), '--no-open'], { env: { ...process.env, PORT: '1', NO_COLOR: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (c) => (out += c));
+    child.stderr.on('data', (c) => (out += c));
+    const code = await new Promise((r) => child.on('exit', r));
+    assert.equal(code, 1);
+    assert.match(out, /No se puede leer tasques\.config\.json/);
+    assert.doesNotMatch(out, /at .*server-lib\.js:\d+/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

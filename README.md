@@ -59,12 +59,12 @@ Si no aparece ninguna clave de ese servicio, entra una vez en la app oficial de 
 | Página en blanco o «Tasques no se ha abierto bien» | Has abierto `index.html` directamente. Usa `Iniciar.cmd`. |
 | «No se puede acceder a este sitio» o «Tasques está cerrado en tu ordenador» | La ventana negra está cerrada. Vuelve a abrir Tasques y pulsa Sincronizar. |
 | Tasques aparece vacío, como el primer día | Estás en otro navegador, en `localhost` o en otro puerto. Abre Tasques con el icono: siempre usa `http://127.0.0.1:8080`. |
-| «El token no es válido» o «ha caducado» | Copia el token otra vez desde *Preferències > Claus de seguretat* y pégalo en Tasques. |
+| «Ese token no funciona en este Moodle» o «Moodle ha rechazado el acceso guardado» | El token está mal copiado o ha caducado. Cópialo otra vez desde *Preferències > Claus de seguretat* y pégalo en Tasques (botón «Reconectar»). Tus tareas marcadas no se pierden. |
 
 ### Desde PowerShell (opcional)
 
 ```powershell
-cd $HOME\Desktop\MoodleTasques
+cd $HOME\Desktop\MoodleTasques       # o la carpeta donde lo descargaste
 .\Iniciar.cmd                       # o: node server.js
 $env:PORT = 8181; node server.js    # variables en PowerShell (no uses VAR=valor)
 ```

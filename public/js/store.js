@@ -37,7 +37,7 @@ const dayDiff = (a, b) => Math.round((startOfDay(a) - startOfDay(b)) / DAY);
 // Grupos, resumen y filtros
 // ---------------------------------------------------------------------------
 
-export function bucketOf(task, now) {
+export function bucketOf(task, now = Date.now()) {
   if (task.due < now) return 'overdue';
   const diffDays = dayDiff(task.due, now);
   if (diffDays <= 0) return 'today';
@@ -80,7 +80,7 @@ export function pendingTasks(tasks, done) {
   return tasks.filter((t) => !isDone(done, t.id));
 }
 
-export function summarize(tasks, done, now) {
+export function summarize(tasks, done, now = Date.now()) {
   const pending = pendingTasks(tasks, done);
   const by = { overdue: 0, today: 0, tomorrow: 0, week: 0, later: 0 };
   pending.forEach((t) => by[bucketOf(t, now)]++);
@@ -110,8 +110,9 @@ export function fold(s) {
     .trim();
 }
 
+// Los campos que faltan cuentan como vacíos (nunca como el texto "undefined").
 const haystack = (t) =>
-  fold(`${t.title} ${t.courseName} ${t.courseShort} ${courseCode(t.courseShort, t.courseName)} ${kindOf(t.kind)[0]}`);
+  fold([t.title, t.courseName, t.courseShort, courseCode(t.courseShort, t.courseName), kindOf(t.kind)[0]].map((v) => v ?? '').join(' '));
 
 // view: 'pending' | 'overdue' | 'today' | 'week' | 'all'. 'all' no mira ni las
 // marcas ni la fecha (sirve para la vista Hechas). day es el inicio de un día
@@ -123,12 +124,15 @@ const haystack = (t) =>
 export function filterTasks(tasks, { done = {}, view = 'pending', course = null, query = '', day = null, minDue = null } = {}, now = Date.now()) {
   const words = fold(String(query ?? '').trim()).split(' ').filter(Boolean);
   const all = view === 'all';
-  const dayStart = day === null || day === undefined ? null : startOfDay(day);
-  const hasCourse = course !== null && course !== undefined;
+  // null, undefined o '' (la opción "Todas" de un select) no filtran.
+  const isSet = (v) => v !== null && v !== undefined && v !== '';
+  const dayStart = isSet(day) ? startOfDay(Number(day)) : null;
+  const hasCourse = isSet(course);
+  const hasMin = isSet(minDue) && Number.isFinite(Number(minDue));
   return tasks.filter((t) => {
     if (!all) {
       if (isDone(done, t.id)) return false;
-      if (minDue !== null && minDue !== undefined && t.due < minDue) return false;
+      if (hasMin && t.due < Number(minDue)) return false;
       const b = bucketOf(t, now);
       if (view === 'overdue' && b !== 'overdue') return false;
       if (view === 'today' && b !== 'today') return false;
@@ -144,7 +148,7 @@ export function filterTasks(tasks, { done = {}, view = 'pending', course = null,
   });
 }
 
-export function groupByBucket(tasks, now) {
+export function groupByBucket(tasks, now = Date.now()) {
   const groups = new Map(BUCKETS.map((b) => [b.id, []]));
   [...tasks].sort((a, b) => a.due - b.due).forEach((t) => groups.get(bucketOf(t, now)).push(t));
   return BUCKETS.map((b) => ({ ...b, tasks: groups.get(b.id) })).filter((g) => g.tasks.length);
@@ -330,7 +334,7 @@ export function formatLongDate(ts, now = Date.now()) {
 }
 
 // { day: 'Hoy' | 'Mañana' | 'Ayer' | 'mié 7 oct', time: '23:59' }
-export function formatDueParts(ts, now) {
+export function formatDueParts(ts, now = Date.now()) {
   const diff = dayDiff(ts, now);
   let day;
   if (diff === 0) day = 'Hoy';
@@ -341,15 +345,16 @@ export function formatDueParts(ts, now) {
 }
 
 // 'Hoy, 18:00', 'Mié 7 oct, 23:59'
-export function formatDue(ts, now) {
+export function formatDue(ts, now = Date.now()) {
   const { day, time } = formatDueParts(ts, now);
   return cap(`${day}, ${time}`);
 }
 
 // 'ahora', 'en 5 min', 'hace 36 h', 'en 2 días'. Más allá de 48 h cuenta días
 // de calendario: el domingo visto desde el viernes está 'en 2 días'.
-export function relative(ts, now) {
+export function relative(ts, now = Date.now()) {
   const diff = ts - now;
+  if (!Number.isFinite(diff)) return '';
   const abs = Math.abs(diff);
   if (abs < MIN) return 'ahora';
   let s;
@@ -361,7 +366,7 @@ export function relative(ts, now) {
 
 // Línea corta para el móvil: 'hace 36 h', '18:00 · en 6 h', '23:59',
 // 'dom 22:00' o 'sáb 17 oct'.
-export function formatDueCompact(ts, now) {
+export function formatDueCompact(ts, now = Date.now()) {
   const b = bucketOf({ due: ts }, now);
   if (b === 'overdue') return relative(ts, now);
   if (b === 'today') return `${formatTime(ts)} · ${relative(ts, now)}`;
@@ -374,7 +379,7 @@ const UNIT_WORDS = { d: ['día', 'días'], h: ['hora', 'horas'], min: ['minuto',
 
 // Cuenta atrás con las dos unidades más significativas, sin ceros:
 // [[2,'d'],[4,'h']], [[5,'h'],[56,'min']], [[42,'min']] o [['menos de 1','min']].
-export function countdownParts(ts, now) {
+export function countdownParts(ts, now = Date.now()) {
   const diff = ts - now;
   if (diff <= 0) return { parts: [[0, 'min']], aria: 'El plazo ha vencido', urgent: true, past: true };
   if (diff < MIN) return { parts: [['menos de 1', 'min']], aria: 'Falta menos de 1 minuto', urgent: true, past: false };
@@ -391,7 +396,7 @@ export function countdownParts(ts, now) {
 }
 
 /** @deprecated Usa countdownParts(ts, now). */
-export function countdown(ts, now) {
+export function countdown(ts, now = Date.now()) {
   const diff = Math.max(0, ts - now);
   const d = Math.floor(diff / DAY);
   const h = Math.floor((diff % DAY) / HOUR);
@@ -413,7 +418,7 @@ export function durationText(ms) {
 
 // Entregas de los próximos días, un elemento por día de calendario (el primero
 // es hoy). ts es el inicio de cada día, también en los días de cambio de hora.
-export function horizon(tasks, now, days = 14) {
+export function horizon(tasks, now = Date.now(), days = 14) {
   const out = [];
   const index = new Map();
   for (let i = 0; i < days; i++) {

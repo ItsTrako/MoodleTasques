@@ -116,6 +116,7 @@ const contextTokens = (context) =>
 // de esas palabras que aparezca en la frase resta 20 bits.
 export function passphraseStrength(p, context = []) {
   if (!p) return { bits: 0, label: 'Vacía', level: 0 };
+  p = String(p);
   if (isCommonPassword(p)) return { bits: 0, label: 'Muy común', level: 0 };
   let pool = 0;
   if (/[a-z]/.test(p)) pool += 26;
@@ -215,8 +216,10 @@ export class Vault {
     }
     if (!rec || typeof rec !== 'object' || rec.v !== VAULT_VERSION || rec.kdf !== 'PBKDF2-SHA256') throw damaged();
     if (!Number.isInteger(rec.iter) || rec.iter < MIN_ITERATIONS || rec.iter > MAX_ITERATIONS) throw damaged();
-    if (!rec.box || typeof rec.box !== 'object' || typeof rec.box.ct !== 'string' || !rec.box.ct) throw damaged();
+    if (!rec.box || typeof rec.box !== 'object') throw damaged();
     if (b64Length(rec.salt) !== 16 || b64Length(rec.box.iv) !== 12) throw damaged();
+    // AES-GCM: al menos 1 byte cifrado más la etiqueta de 16 bytes.
+    if (b64Length(rec.box.ct) < 17) throw damaged();
     return rec;
   }
 
@@ -247,6 +250,8 @@ export class Vault {
     const rec = this.read();
     if (!rec) throw vaultError('No hay ninguna bóveda guardada.', 'nodata');
     const salt = fromB64(rec.salt);
+    // Sin Web Crypto (página sin HTTPS ni localhost) se explica eso; los datos no están dañados.
+    subtle();
     let key;
     try {
       key = await deriveKey(String(passphrase ?? ''), salt, rec.iter);

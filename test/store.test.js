@@ -118,6 +118,9 @@ test('filtra por vista, asignatura y texto', () => {
   assert.equal(T.filterTasks(tasks, { view: 'pending', query: 'químic' }, NOW).length, 1);
   assert.equal(T.filterTasks(tasks, { view: 'pending', query: '  quimica  ' }, NOW).length, 1);
   assert.equal(T.filterTasks(tasks, { view: 'pending', done: { Informe: NOW } }, NOW).length, 1);
+  // El id de asignatura puede llegar como texto (valor de un select); '' no filtra.
+  assert.equal(T.filterTasks(tasks, { course: '2' }, NOW).length, 1);
+  assert.equal(T.filterTasks(tasks, { course: '', day: '', minDue: '' }, NOW).length, 2);
 });
 
 test('la vista "Hoy" solo trae lo pendiente que vence hoy', () => {
@@ -191,6 +194,15 @@ test('la búsqueda ignora acentos, mayúsculas y la ela geminada', () => {
   assert.equal(find('   ').length, tasks.length);
 });
 
+test('la búsqueda no encuentra "undefined" en campos que faltan', () => {
+  const bare = { id: 'x', title: 'Hola', kind: 'assign', courseId: 1, courseName: 'Física', due: NOW + H, source: 'moodle' };
+  assert.equal(T.filterTasks([bare], { query: 'undefined' }, NOW).length, 0);
+  assert.equal(T.filterTasks([{ ...bare, courseShort: null }], { query: 'null' }, NOW).length, 0);
+  assert.equal(T.filterTasks([{ ...bare, kind: undefined }], { query: 'actividad' }, NOW).length, 1);
+  assert.equal(T.filterTasks([bare], { query: null }, NOW).length, 1);
+  assert.equal(T.filterTasks([bare]).length, 1, 'sin opciones ni now');
+});
+
 test('fold quita acentos y puntuación', () => {
   assert.equal(T.fold('Cèl·lula, Ñandú!'), 'celula nandu');
   assert.equal(T.fold("L'Àgora"), 'lagora');
@@ -225,6 +237,13 @@ test('relative', () => {
   // Viernes 10:00 a domingo 23:59: dos días de calendario, no tres.
   assert.equal(T.relative(at(2026, 10, 11, 23, 59), NOW), 'en 2 días');
   assert.equal(T.relative(at(2026, 10, 6, 9), NOW), 'hace 3 días');
+  // 48 h en el fin de semana del cambio de hora: nunca "1 días".
+  assert.equal(T.relative(at(2026, 10, 24) + 48 * H, at(2026, 10, 24)), 'en 2 días');
+  // Una fecha que falta no da "hace NaN días".
+  assert.equal(T.relative(undefined, NOW), '');
+  assert.equal(T.relative(NaN, NOW), '');
+  // Sin now usa la hora actual.
+  assert.equal(T.relative(Date.now() + 5 * MIN + 2000), 'en 5 min');
 });
 
 test('formatDueParts y formatDue', () => {
@@ -424,4 +443,17 @@ test('exporta .ics válido', () => {
   assert.match(ics, /^BEGIN:VCALENDAR\r\n/);
   assert.match(ics, /SUMMARY:Comentari\\; de text\\, part 1/);
   assert.ok(ics.split('\r\n').every((l) => new TextEncoder().encode(l).length <= 75));
+});
+
+test('.ics: pliega líneas largas con acentos y salta fechas imposibles', () => {
+  const long = task('ev2', NOW + D, { title: 'Comentari de text: '.repeat(4) + 'cèl·lula, història i àmbit científic\nsegona línia', courseShort: '' });
+  const ics = buildIcs([long, task('ev3', NaN), task('ev4', undefined)], NOW);
+  const lines = ics.split('\r\n');
+  assert.ok(lines.every((l) => new TextEncoder().encode(l).length <= 75));
+  assert.equal(ics.match(/BEGIN:VEVENT/g).length, 1);
+  // Al desplegar (quitar CRLF + espacio) queda el texto entero, sin romper caracteres.
+  const unfolded = ics.replace(/\r\n /g, '');
+  assert.ok(unfolded.includes('cèl·lula\\, història i àmbit científic\\nsegona línia (Física)'));
+  assert.ok(!unfolded.includes('�'));
+  assert.ok(ics.endsWith('END:VCALENDAR\r\n'));
 });

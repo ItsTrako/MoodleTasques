@@ -56,7 +56,7 @@ const validPort = (p) => Number.isInteger(p) && p >= 1 && p <= 65535;
 export function parseConfigText(text) {
   let cfg;
   try {
-    cfg = JSON.parse(String(text).replace(/^﻿/, ''));
+    cfg = JSON.parse(String(text).replace(/^\uFEFF/, ''));
   } catch (e) {
     throw new ConfigError(
       'No se puede leer tasques.config.json.',
@@ -90,17 +90,18 @@ export function normalizeMoodleUrl(raw) {
   return u.origin + (parts.length ? '/' + parts.join('/') : '');
 }
 
+// Nombre de servidor de una entrada de MOODLE_ALLOWED_HOSTS o extraAllowedHosts
+// ('campus.example.cat' o 'https://campus.example.cat/moodle'). '' si está vacía,
+// null si no es un nombre válido.
 function hostOf(entry) {
-  const s = String(entry).trim().toLowerCase();
+  const s = String(entry ?? '').trim().toLowerCase();
   if (!s) return '';
-  if (s.includes('://')) {
-    try {
-      return new URL(s).hostname;
-    } catch {
-      return '';
-    }
+  try {
+    const h = new URL(s.includes('://') ? s : 'https://' + s).hostname;
+    return /^[a-z0-9.-]+$|^\[[0-9a-f:.]+\]$/.test(h) ? h : null;
+  } catch {
+    return null;
   }
-  return s;
 }
 
 // cfg (ya parseado) + entorno + argumentos -> configuración efectiva.
@@ -132,11 +133,12 @@ export function resolveConfig(cfg = {}, { env = {}, argv = [] } = {}) {
     }
   }
 
-  const allowedHosts = new Set(
-    [...String(env.MOODLE_ALLOWED_HOSTS || '').split(','), ...(Array.isArray(cfg.extraAllowedHosts) ? cfg.extraAllowedHosts : [])]
-      .map(hostOf)
-      .filter(Boolean)
-  );
+  const allowedHosts = new Set();
+  for (const entry of [...String(env.MOODLE_ALLOWED_HOSTS || '').split(','), ...(Array.isArray(cfg.extraAllowedHosts) ? cfg.extraAllowedHosts : [])]) {
+    const h = hostOf(entry);
+    if (h) allowedHosts.add(h);
+    else if (h === null) warnings.push(`He ignorado «${String(entry).trim().slice(0, 80)}» de los servidores autorizados: no es un nombre de servidor válido.`);
+  }
 
   let connectOrigin = null;
   if (cfg.lockToMoodle === true) {
@@ -146,7 +148,7 @@ export function resolveConfig(cfg = {}, { env = {}, argv = [] } = {}) {
 
   const schoolName =
     typeof cfg.schoolName === 'string' && cfg.schoolName.trim()
-      ? cfg.schoolName.replace(/[\u0000-\u001f\u007f‪-‮⁦-⁩]/g, '').trim().slice(0, 80)
+      ? cfg.schoolName.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 80)
       : null;
 
   return {
@@ -174,7 +176,10 @@ export const proxyEnabled = (cfg) => cfg.allowedSites.size > 0 || cfg.allowedHos
 // Nombres con los que se puede llegar a este servidor. Cualquier otro (por ejemplo
 // un dominio que alguien hace apuntar a 127.0.0.1) recibe 421.
 export function okHosts(port, publicHost = '') {
-  const set = new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]);
+  const names = ['127.0.0.1', 'localhost', '[::1]'];
+  const set = new Set(names.map((n) => `${n}:${port}`));
+  // En el puerto 80 el navegador no escribe el puerto en Host ni en Origin.
+  if (Number(port) === 80) names.forEach((n) => set.add(n));
   for (const h of String(publicHost || '').split(',')) {
     const v = h.trim().toLowerCase();
     if (v) set.add(v);
@@ -202,7 +207,17 @@ export const isJsonType = (ct) => String(ct || '').split(';')[0].trim().toLowerC
 
 // Segmentos que nunca forman parte de la raíz de un Moodle y que, delante de
 // /login/token.php, harían que el servidor ejecutara otro script (PATH_INFO).
-const BAD_SEGMENT = /\.(php\d?|phtml|phar|cgi|pl|aspx?|jsp)$|;|%(2f|5c|2e|00)/i;
+// Se mira también el texto decodificado («service.php%20», «x.php::$DATA»...).
+function badSegment(seg) {
+  if (!seg || /;|%(2f|5c|2e|00)/i.test(seg)) return true;
+  let d;
+  try {
+    d = decodeURIComponent(seg);
+  } catch {
+    return true;
+  }
+  return /[\u0000-\u001f:\\]/.test(d) || /\.(php\d?|phtml|phar|cgi|pl|aspx?|jsp)[\s.]*$/i.test(d);
+}
 
 // URL final del puente, o null si no está permitida. `site` debe venir en forma
 // canónica (como la produce el cliente) y coincidir con el Moodle configurado
@@ -220,7 +235,7 @@ export function proxyTarget(site, path, allowedSites, allowedHosts) {
   const base = s.pathname.replace(/\/+$/, '');
   // Nada de «?», «#», «.», «..», «//» ni puertos escondidos en el texto original.
   if (site.replace(/\/+$/, '') !== s.origin + base) return null;
-  if (base.split('/').slice(1).some((seg) => !seg || BAD_SEGMENT.test(seg))) return null;
+  if (base.split('/').slice(1).some(badSegment)) return null;
   const t = new URL(s.origin + base + '/' + path);
   if (t.pathname !== base + '/' + path || t.search) return null;
   return allowedSites.has((s.origin + base).toLowerCase()) || allowedHosts.has(s.hostname.toLowerCase()) ? t : null;

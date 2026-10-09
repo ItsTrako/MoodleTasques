@@ -131,6 +131,13 @@ function form(params) {
   return body;
 }
 
+function timeoutSignal(ms) {
+  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  const ctrl = new AbortController();
+  setTimeout(() => ctrl.abort(new DOMException('Tiempo agotado', 'TimeoutError')), ms);
+  return ctrl.signal;
+}
+
 const BRIDGE_REFUSALS = new Set([400, 403, 404, 405, 415, 421]);
 const isOffline = () => globalThis.navigator?.onLine === false;
 const headerOf = (res, name) => {
@@ -153,9 +160,19 @@ export class MoodleClient {
   // Cada petición tiene su propio plazo de 25 s, y se corta también si se
   // cancela la sincronización (this.signal).
   requestSignal() {
-    const timeout = AbortSignal.timeout(TIMEOUT_MS);
+    const timeout = timeoutSignal(TIMEOUT_MS);
     if (!this.signal) return timeout;
-    return AbortSignal.any ? AbortSignal.any([this.signal, timeout]) : this.signal;
+    if (typeof AbortSignal.any === 'function') return AbortSignal.any([this.signal, timeout]);
+    // Navegadores sin AbortSignal.any (Safari < 17.4): se combinan a mano.
+    const ctrl = new AbortController();
+    for (const s of [this.signal, timeout]) {
+      if (s.aborted) {
+        ctrl.abort(s.reason);
+        break;
+      }
+      s.addEventListener('abort', () => ctrl.abort(s.reason), { once: true });
+    }
+    return ctrl.signal;
   }
 
   // Traduce el fallo de fetch (o de leer la respuesta) a un MoodleError, o
@@ -190,13 +207,25 @@ export class MoodleClient {
         signal: this.requestSignal(),
       });
 
-    let res;
-    if (this.transport === 'proxy') {
+    const viaProxy = async () => {
+      let r;
       try {
-        res = await proxy();
+        r = await proxy();
       } catch (err) {
         throw this.fetchFailure(err, 'proxy');
       }
+      // Estos errores en texto plano los da el propio puente (apagado, sitio
+      // no permitido, otro origen...); lo que viene de Moodle llega como JSON.
+      // No son un "no encontramos Moodle en esa dirección".
+      if (BRIDGE_REFUSALS.has(r.status) && !/json/i.test(headerOf(r, 'content-type'))) {
+        throw new MoodleError(FRIENDLY.network, 'network');
+      }
+      return r;
+    };
+
+    let res;
+    if (this.transport === 'proxy') {
+      res = await viaProxy();
     } else {
       try {
         res = await direct();
@@ -205,15 +234,7 @@ export class MoodleClient {
         if (fatal) throw fatal;
         if (this.transport !== 'auto') throw new MoodleError(FRIENDLY.network, 'network');
         // El navegador no ha podido (CORS o red): probamos el puente local.
-        try {
-          res = await proxy();
-        } catch (err2) {
-          throw this.fetchFailure(err2, 'proxy');
-        }
-        // Estos errores en texto plano los da el propio puente (apagado, sitio
-        // no permitido...); lo que viene de Moodle llega como JSON.
-        const own = BRIDGE_REFUSALS.has(res.status) && !/json/i.test(headerOf(res, 'content-type'));
-        if (own) throw new MoodleError(FRIENDLY.network, 'network');
+        res = await viaProxy();
         this.transport = 'proxy';
       }
     }
@@ -311,7 +332,8 @@ export function decodeEntities(s) {
   return String(s ?? '').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
     if (e[0] === '#') {
       const n = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-      return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m;
+      // Sin sustitutos sueltos (D800-DFFF): no son caracteres válidos.
+      return n > 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : m;
     }
     return ENTITIES[e.toLowerCase()] ?? m;
   });
@@ -375,11 +397,14 @@ export function pickLang(s, pref = 'es') {
 // Las etiquetas en línea desaparecen sin dejar espacio ("Matem<b>à</b>tiques");
 // el resto se cambian por un espacio.
 const INLINE_TAG = /<\/?(?:a|abbr|b|bdi|bdo|code|del|em|font|i|ins|mark|q|s|small|span|strong|sub|sup|u)\b[^>]*>/gi;
+// El contenido de <script> y <style> nunca es texto para la persona.
+const CODE_BLOCK = /<(script|style)\b[\s\S]*?<\/\1\s*>/gi;
 
 // Texto plano de una sola línea a partir de un nombre de Moodle.
 export const textOf = (s, max, pref = 'es') =>
   decodeEntities(
     pickLang(String(s ?? ''), pref)
+      .replace(CODE_BLOCK, ' ')
       .replace(INLINE_TAG, '')
       .replace(/<[^>]*>/g, ' ')
   )
@@ -393,7 +418,7 @@ export const textOf = (s, max, pref = 'es') =>
 export function plainText(html, max = 600, pref = 'es') {
   return decodeEntities(
     pickLang(String(html ?? ''), pref)
-      .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
+      .replace(CODE_BLOCK, ' ')
       .replace(/<(br|\/p|\/div|\/li|\/h\d)[^>]*>/gi, '\n')
       .replace(INLINE_TAG, '')
       .replace(/<[^>]*>/g, ' ')
@@ -413,7 +438,7 @@ const KINDS = new Set(['assign', 'quiz', 'forum', 'workshop', 'lesson', 'scorm',
 // Convierte un evento de la línea de tiempo en una tarea, o null si el evento
 // no sirve (sin id o con una fecha imposible).
 export function eventToTask(ev, siteUrl, pref = 'es') {
-  if (!ev || typeof ev !== 'object' || ev.id === undefined || ev.id === null) return null;
+  if (!ev || typeof ev !== 'object' || ev.id === undefined || ev.id === null || String(ev.id) === '') return null;
   const due = Number(ev.timesort ?? ev.timestart) * 1000;
   if (!Number.isFinite(due) || due <= 0 || due > MAX_DUE) return null;
   const course = ev.course && typeof ev.course === 'object' ? ev.course : {};
